@@ -98,3 +98,23 @@ there is no list of all songs to keep (and one would be far over a few MB).
 **Stock cabinet limits** (from players, to be confirmed on the cabinet): about 50 songs per stick,
 audio under 5 MB and in OGG, songs fading out around 105 s. A modded cabinet (Simply Love theme) may lift
 the length limit.
+
+**The cabinet wants charts on the music itself (cab offset 0).** Four songs the user finds perfect on their
+cabinet (Doki Doki, 1001 Arabian Nights, Turii -Panta Rhei-, Angels Crying) were measured: their notes sit
+-3.3, +2.9, +5.4 and +3.0 ms from the music's attacks, 2.0 ms on average, far inside the tightest judgement
+window (about 21 ms). So no correction is added for this cabinet; a chart carrying the ~9 ms PC-to-ITG
+difference will feel about 9 ms off on it.
+
+**Measuring a chart's sync** (`src/audio/attacks.odin`, `src/audio/sync_match.odin`, `src/chart/`). The Ogg
+that goes onto the stick is decoded as StepMania plays it, mixed to mono, and cut into 512-sample windows
+every 64 samples (1.45 ms); the attack strength is each window's rise in log spectrum (spectral flux), less
+its 220 ms average. Every shift of the notes within +-100 ms is scored by the average strength under the
+notes; the best shift, refined between steps, is the measurement. The method reads attacks 2.9 ms early on a
+known click track, which is added back. It is Unsure when the best shift barely stands out (best / average
+under 2.5: the four songs score 6-23, a chart against another song's audio 1.4 at most) or a rival shift
+20+ ms away comes within 85% of it. Every chart's notes in the .sm are used (taps, hold and roll heads).
+On a PC it takes 0.6 s per song, decoding included; spacing windows half as far apart measured within
+0.2 ms of this at twice the cost. The app only shows the result (a mark on the song, and the #OFFSET that
+would fit): the sync is the user's to change. Tests: the click track measures 0 and +9 ms when moved; the
+four songs (the user's own files in the git-ignored `tests/fixtures/sync/`, skipped when missing) measure
+under 6 ms, and each chart against another song's audio comes out Unsure.

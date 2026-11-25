@@ -7,10 +7,12 @@ Runs on the worker thread (worker.odin); everything here blocks on the network.
 package a2itg2
 
 import "core:fmt"
+import "core:math"
 import "core:slice"
 import "core:strings"
 import "tls"
 import "audio"
+import "chart"
 import "web"
 import "zip"
 
@@ -145,8 +147,9 @@ find_songs :: proc(pack: ^Pack) {
 // MP3 audio is converted to Ogg Vorbis within the audio limit (src/audio: sample-exact, so the chart's
 // sync holds) and the chart's #MUSIC is rewritten to the new name. An Ogg over the limit is re-encoded
 // smaller under its own name; Oggs that fit are copied untouched. With the length patch on, an Ogg
-// longer than 1:45 (converted or copied) is patched to read as 1:45. The chart is written last: a song
-// folder is complete once its chart is there.
+// longer than 1:45 (converted or copied) is patched to read as 1:45. The Ogg that goes onto the stick
+// is measured against the chart's notes (measure_sync), before any length patch. The chart is written
+// last: a song folder is complete once its chart is there.
 copy_song :: proc(anchors: ^tls.Trust_Anchors, pack: ^Pack, index: int, destination: Folder_Ref, options: Copy_Options, progress: Copy_Progress_Proc) -> (notes: Copy_Notes, problem: Pack_Problem) {
 	audio_limit := options.audio_limit
 	song := pack.songs[index]
@@ -208,6 +211,8 @@ copy_song :: proc(anchors: ^tls.Trust_Anchors, pack: ^Pack, index: int, destinat
 			}, &conversion_progress)
 			if convert_problem != .None do return notes, convert_problem_text(convert_problem, audio_limit)
 			defer delete(conversion.ogg)
+			progress({step = .Measuring, done = done, total = total})
+			notes.sync = measure_sync(chart_text, conversion.ogg)
 			if options.length_patch do apply_length_patch(conversion.ogg, &notes)
 			ogg_name := ogg_name_for(pack, song, file_name)
 			if write_problem := write_file(folder, ogg_name, conversion.ogg, "audio/ogg"); write_problem != "" {
@@ -237,6 +242,10 @@ copy_song :: proc(anchors: ^tls.Trust_Anchors, pack: ^Pack, index: int, destinat
 			notes.shrunk = true
 			notes.original_bytes = int(entry.uncompressed_size)
 			notes.ogg_bytes, notes.ogg_bitrate = len(shrunk.ogg), shrunk.bitrate
+		}
+		if entry_index == music && is_ogg {
+			progress({step = .Measuring, done = done, total = total})
+			notes.sync = measure_sync(chart_text, data)
 		}
 		if entry_index == music && is_ogg && options.length_patch do apply_length_patch(data, &notes)
 
@@ -273,6 +282,7 @@ Copy_Step :: enum u8 {
 	Fetching,
 	Converting, // an MP3 becoming an Ogg
 	Shrinking,  // an Ogg over the audio limit being re-encoded smaller
+	Measuring,  // the Ogg measured against the chart's notes
 }
 
 // Where a copy is: `done` of `total` files, and while converting, `percent` of encoding `pass`
@@ -305,6 +315,34 @@ Copy_Notes :: struct {
 	length_patched:   bool, // the Ogg now reads as 1:45
 	patch_failed:     bool, // the Ogg couldn't be read for patching (copied unpatched)
 	real_seconds:     f64,
+	sync:             Song_Sync,
+}
+
+// How the chart's notes sit on its music (audio/sync_match.odin), and the #OFFSET that would put them
+// on it. Only shown: changing the sync is the user's to do.
+Song_Sync :: struct {
+	state:     audio.Match_State,
+	shift_ms:  f64, // the music after the notes (+: the notes are early)
+	offset:    f64, // the chart's #OFFSET
+	suggested: f64, // the #OFFSET with the notes on the music, to the millisecond (StepMania writes 3 decimals)
+}
+
+measure_sync :: proc(chart_text: string, ogg: []u8) -> (sync: Song_Sync) {
+	timing, timing_ok := chart.read_timing(chart_text)
+	if !timing_ok do return
+	defer chart.timing_destroy(&timing)
+	attacks, attacks_ok := audio.ogg_attacks(ogg)
+	if !attacks_ok do return
+	defer audio.attacks_destroy(&attacks)
+	notes := chart.note_seconds(chart_text, timing)
+	defer delete(notes)
+	match := audio.match_notes(attacks, notes)
+	sync.state = match.state
+	sync.shift_ms = match.shift * 1000
+	sync.offset = timing.offset
+	// A note's time is its beat's time minus #OFFSET: notes that are early need a smaller #OFFSET.
+	sync.suggested = math.round((timing.offset - match.shift) * 1000) / 1000
+	return
 }
 
 @(private = "file")

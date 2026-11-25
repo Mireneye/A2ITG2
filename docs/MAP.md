@@ -13,7 +13,9 @@
 | `src/text.odin` | Pixel drawing and a 5x7 bitmap font (ZZ-Replace: stand-in UI) |
 | `src/web/` | HTTPS GET of a byte range, over `src/tls` |
 | `src/zip/` | Reading a zip a few byte ranges at a time, ZIP64 included; `zip_test.odin` tests it |
-| `src/audio/` | MP3 to Ogg and shrinking Oggs: `mp3_decode.odin` and `ogg_decode.odin` (StepMania's MP3 and Ogg reading, ported), `convert.odin` (Vorbis encoding to a size limit), `length_patch.odin` (the ITG Ogg length patch), `libraries.odin` (C bindings); tests check sync to the sample |
+| `src/audio/` | MP3 to Ogg and shrinking Oggs: `mp3_decode.odin` and `ogg_decode.odin` (StepMania's MP3 and Ogg reading, ported), `convert.odin` (Vorbis encoding to a size limit), `length_patch.odin` (the ITG Ogg length patch), `attacks.odin` and `sync_match.odin` (measuring where the music's beats are against a chart's notes), `libraries.odin` (C bindings); tests check sync to the sample |
+| `src/chart/` | A `.sm` chart's timing: `#OFFSET`, `#BPMS`, `#STOPS`, when each note is; `sync_test.odin` tests the sync measurement |
+| `src/insets.odin` | How much of the window the phone's status and navigation bars cover |
 | `src/tls/` | TLS 1.3/1.2 client, copied from Weaving Mirage (see `docs/VENDORED.md`) |
 | `src/inflate/` | Deflate decoder, copied from Folding Mirage (see `docs/VENDORED.md`) |
 | `app/AndroidManifest.xml` | The app's package name, its activity (`OdinActivity`), library name (`a2itg2`), internet permission |
@@ -22,6 +24,7 @@
 | `build.bat` | Building on a PC instead (optional); `install` also puts it on the phone |
 | `tools/build_audio_libs.sh` | Fetches libmad (StepMania's copy), libogg and libvorbis at pinned commits and builds `libs/<target>/libaudio.a` |
 | `tools/make_audio_fixtures.py` | Makes the click-track and dense test MP3s for `src/audio` (needs `lame`) |
+| `tests/fixtures/sync/` | Git-ignored: the user's cab-perfect songs (`.sm` + `.ogg`) for the sync tests |
 | `tools/make_zip_fixtures.py` | Makes the test zips for `src/zip` (into the git-ignored `tests/fixtures/`) |
 | `docs/DESIGN.md` | What the app is meant to become, and the findings behind it |
 | `docs/VENDORED.md` | Where the copied code came from, and the changes made to it |

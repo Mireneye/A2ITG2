@@ -6,6 +6,7 @@ readable status lines.
 */
 package a2itg2
 
+import "core:slice"
 import "core:strings"
 
 Canvas :: struct {
@@ -28,11 +29,9 @@ fill :: proc(canvas: Canvas, color: u32) {
 fill_rect :: proc(canvas: Canvas, x, y, width, height: int, color: u32) {
 	x0, y0 := max(x, 0), max(y, 0)
 	x1, y1 := min(x + width, canvas.width), min(y + height, canvas.height)
+	if x1 <= x0 do return
 	for row in y0..<y1 {
-		line := canvas.pixels[row*canvas.stride:]
-		for column in x0..<x1 {
-			line[column] = color
-		}
+		slice.fill(canvas.pixels[row*canvas.stride + x0:row*canvas.stride + x1], color) // vectorised stores
 	}
 }
 

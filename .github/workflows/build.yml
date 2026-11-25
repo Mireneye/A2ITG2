@@ -82,6 +82,7 @@ jobs:
           ~/odin/odin test src/zip
           ~/odin/odin test src/tls
           ~/odin/odin test src/audio
+          ~/odin/odin test src/chart
 
       - name: Build APK
         run: |

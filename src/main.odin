@@ -17,9 +17,15 @@ The screen, top to bottom (screen.odin draws it):
 	AUDIO row   the most an Ogg may take (MP3s are converted to fit); tap - or + to change it
 	PATCH row   whether Oggs over 1:45 are length patched to read as 1:45; tap to switch
 	PACK row    the open pack; tap to read it again
-	the pack's songs; tap one to copy it into the stick folder (videos are left out)
+	the pack's songs; tap one to copy it into the stick folder (videos are left out). A copied song
+	whose notes sit off its music carries a sync mark at the right (SYNC +9 MS, or SYNC ? when it
+	couldn't be measured); tap the mark to fold out what was measured and the #OFFSET that would fit.
+	Nothing is changed: the sync is the user's to set.
 
+The screen keeps clear of the phone's status and navigation bars (insets.odin).
 Everything slow runs on the worker thread (worker.odin); this loop only draws and handles touches.
+Touches and messages only ask for a redraw; the loop draws once after taking everything waiting, so
+a fast finger never queues up frames behind it.
 Everything is also logged to logcat under "A2ITG2".
 */
 package a2itg2
@@ -48,6 +54,11 @@ AUDIO_LIMIT_MAX     :: 20_000_000
 
 STATUS_ROWS :: 4 // the status area keeps its size; older lines scroll off
 
+// Sync marks: within SYNC_MILD_MS no mark (all four cab-perfect test songs are); up to SYNC_STRONG_MS
+// a quiet mark (often the ~9 ms some charters add); past it a loud one.
+SYNC_MILD_MS   :: 6.0
+SYNC_STRONG_MS :: 15.0
+
 Screen_Mood :: enum {
 	Waiting,
 	Good,
@@ -70,6 +81,7 @@ Tap_Target :: union {
 	Toggle_Length_Patch,
 	Reload_Pack,
 	Song_Tap,
+	Sync_Fold,
 }
 Show_Page         :: struct { page: Page }
 Pick_Search_Kind  :: struct { kind: Search_Kind }
@@ -81,6 +93,7 @@ Audio_Limit_Up   :: struct {}
 Toggle_Length_Patch :: struct {}
 Reload_Pack      :: struct {}
 Song_Tap         :: struct { index: int }
+Sync_Fold        :: struct { index: int }
 
 // A tap target's area. left/right 0/0 means the whole width.
 Hit :: struct {
@@ -115,6 +128,7 @@ App_State :: struct {
 	highlight:     int,    // the song row to highlight, or -1
 	songs:         []Song_Row,
 	copying:       int, // the song being copied, or -1
+	fold_open:     int, // the song row whose sync foldout is open, or -1
 	progress:      Copy_Progress,
 
 	scroll:        int, // pixels the song list is scrolled down (results_scroll for the pack list)
@@ -123,6 +137,10 @@ App_State :: struct {
 	touch_start_y: f32,
 	touch_last_y:  f32,
 	dragging:      bool,
+
+	redraw:        bool, // draw when the loop has taken everything waiting
+	bars:          Bar_Insets,
+	bars_known:    bool,
 }
 
 state: App_State
@@ -137,6 +155,7 @@ main :: proc() {
 	state.private_dir = strings.clone_from_cstring(app.activity.internalDataPath)
 	state.copying = -1
 	state.highlight = -1
+	state.fold_open = -1
 	load_settings()
 
 	listen_for_picker_result(app)
@@ -150,9 +169,13 @@ main :: proc() {
 	}
 
 	for app.destroyRequested == 0 {
-		source: ^glue.android_poll_source
-		if android.ALooper_pollOnce(-1, nil, nil, (^rawptr)(&source)) >= 0 && source != nil {
-			source.process(app, source)
+		// Wait for something, then take everything else already waiting without waiting again.
+		timeout: i32 = -1
+		for app.destroyRequested == 0 {
+			source: ^glue.android_poll_source
+			if android.ALooper_pollOnce(timeout, nil, nil, (^rawptr)(&source)) < 0 do break
+			if source != nil do source.process(app, source)
+			timeout = 0
 		}
 		// The picker answers on Android's UI thread and the worker on its own; both wake this loop.
 		if result, ok := take_picker_result(); ok {
@@ -160,6 +183,10 @@ main :: proc() {
 		}
 		handle_worker_messages()
 		handle_text_events()
+		if state.redraw {
+			state.redraw = false
+			draw(app)
+		}
 		free_all(context.temp_allocator)
 	}
 }
@@ -202,7 +229,7 @@ set_folder :: proc(address: string) {
 	delete(state.folder)
 	state.folder = strings.clone(address)
 	state.folder_ok = true
-	draw(glue.app())
+	request_draw()
 }
 
 handle_worker_messages :: proc() {
@@ -217,11 +244,13 @@ handle_worker_messages :: proc() {
 		case Pack_Ready:
 			free_song_rows()
 			state.pack_id, state.pack_name, state.songs = m.id, m.name, m.rows
+			state.fold_open = -1
 			find_wanted_song()
 			state.scroll = 0
 		case Copy_Progress:
 			state.progress = m
 			state.copying = -1 if m.finished else m.song
+			if m.finished && m.song < len(state.songs) do state.songs[m.song].sync = m.sync
 		case Search_Results:
 			if m.stamp != state.search_stamp {
 				free_pack_rows(m.rows) // an answer to an older search
@@ -231,7 +260,7 @@ handle_worker_messages :: proc() {
 			state.results, state.results_scroll = m.rows, 0
 		}
 	}
-	draw(glue.app())
+	request_draw()
 }
 
 on_tap :: proc(app: ^glue.android_app, x, y: int) {
@@ -283,6 +312,8 @@ on_tap :: proc(app: ^glue.android_app, x, y: int) {
 		case Reload_Pack:
 			if state.copying >= 0 do return
 			worker_ask(Open_Pack{id = state.pack_id})
+		case Sync_Fold:
+			state.fold_open = -1 if state.fold_open == target.index else target.index
 		case Song_Tap:
 			switch {
 			case !state.folder_ok:
@@ -296,7 +327,7 @@ on_tap :: proc(app: ^glue.android_app, x, y: int) {
 				worker_ask(Copy_Song{index = target.index, tree = strings.clone(state.folder), options = options})
 			}
 		}
-		draw(app)
+		request_draw()
 		return
 	}
 }
@@ -321,7 +352,7 @@ handle_text_events :: proc() {
 			state.typing = false
 		}
 	}
-	draw(glue.app())
+	request_draw()
 }
 
 search_now :: proc() {
@@ -410,6 +441,10 @@ saved_folder_path :: proc() -> string {
 	return fmt.tprintf("%s/%s", state.private_dir, SAVED_FOLDER_FILE)
 }
 
+request_draw :: proc() {
+	state.redraw = true
+}
+
 // Show a status (and log it). The newest lines stay on screen.
 say :: proc(mood: Screen_Mood, lines: ..string) {
 	MAX_LINES :: 16
@@ -423,13 +458,16 @@ say :: proc(mood: Screen_Mood, lines: ..string) {
 		}
 		append(&state.lines, strings.to_upper(line))
 	}
-	draw(glue.app())
+	request_draw()
 }
 
 on_app_cmd :: proc(app: ^glue.android_app, cmd: i32) {
 	switch cmd {
-	case glue.APP_CMD_INIT_WINDOW, glue.APP_CMD_WINDOW_RESIZED, glue.APP_CMD_WINDOW_REDRAW_NEEDED:
-		draw(app)
+	case glue.APP_CMD_INIT_WINDOW, glue.APP_CMD_WINDOW_RESIZED, glue.APP_CMD_CONTENT_RECT_CHANGED, glue.APP_CMD_CONFIG_CHANGED:
+		state.bars, state.bars_known = read_bar_insets(app)
+		request_draw()
+	case glue.APP_CMD_WINDOW_REDRAW_NEEDED:
+		draw(app) // Android waits for this frame
 	case glue.APP_CMD_ACTIVITY_CHANGED:
 		// A new activity object replaced the old one, so the listener has to be added again.
 		state.listener_set = false
@@ -454,7 +492,7 @@ on_input_event :: proc(app: ^glue.android_app, event: ^android.AInputEvent) -> i
 			list_scroll := &state.scroll if state.page == .Songs else &state.results_scroll
 			list_scroll^ -= int(y - state.touch_last_y)
 			state.touch_last_y = y
-			draw(app)
+			request_draw()
 		}
 	case .UP:
 		if !state.dragging do on_tap(app, int(state.touch_x), int(y))

@@ -2,13 +2,16 @@
 Drawing the screen (layout in main.odin's header) and remembering where the tap targets are.
 Every area has a fixed size from the top: nothing grows or shrinks with its content. List rows are
 two lines (a name on top, its details under it), so names get the whole width; header rows keep
-their words short or are buttons, so nothing has to be cut. Fixed texts are kept to 26 letters, what
+their words short or are buttons, so nothing has to be cut. A song's sync foldout adds SYNC_FOLD_LINES
+under its row, only while the user has it open. The phone's bars are kept clear: the coloured strip
+reaches under the status bar, and nothing is drawn or tappable under the navigation bar. Fixed texts are kept to 26 letters, what
 a 1080-pixel-wide screen fits on one line.
 ZZ-Replace: a functional stand-in UI drawn straight into the window's pixels.
 */
 package a2itg2
 
 import "core:fmt"
+import "core:math"
 import "core:net"
 import "core:strings"
 import "core:sys/android"
@@ -60,11 +63,20 @@ Layout :: struct {
 	list_row: int, // two-line rows
 	columns:  int, // text cells across a row
 	top:      int, // where the page's own area starts
+	bottom:   int, // where it ends: the navigation bar's top
 }
+
+SYNC_FOLD_LINES :: 3
+
+@(private = "file") geometry_window: ^android.ANativeWindow // the window the buffer format was set for
 
 draw :: proc(app: ^glue.android_app) {
 	if app == nil || app.window == nil do return
-	android.ANativeWindow_setBuffersGeometry(app.window, 0, 0, .R8G8B8A8_UNORM)
+	if geometry_window != app.window {
+		android.ANativeWindow_setBuffersGeometry(app.window, 0, 0, .R8G8B8A8_UNORM)
+		geometry_window = app.window
+	}
+	if !state.bars_known do state.bars, state.bars_known = read_bar_insets(app)
 	buffer: android.ANativeWindow_Buffer
 	if android.ANativeWindow_lock(app.window, &buffer, nil) != 0 do return
 	defer android.ANativeWindow_unlockAndPost(app.window)
@@ -75,10 +87,11 @@ draw :: proc(app: ^glue.android_app) {
 	l.row = row_height(app)
 	l.list_row = song_row_height(app)
 	l.columns = l.canvas.width / (CELL_WIDTH * l.scale) - 2 * MARGIN_CELLS
+	l.bottom = l.canvas.height - clamp(state.bars.bottom, 0, l.canvas.height / 4)
 	clear(&state.hits)
 	fill(l.canvas, COLOR_BACKGROUND)
 
-	strip_height := l.canvas.height / 14
+	strip_height := max(l.canvas.height / 14, state.bars.top + 4 * l.scale)
 	status_top := strip_height + 2 * l.scale
 	tabs_top := status_top + STATUS_ROWS * CELL_HEIGHT * l.scale + 2 * l.scale
 	l.top = tabs_top + l.row
@@ -88,6 +101,7 @@ draw :: proc(app: ^glue.android_app) {
 	case .Packs: draw_packs_page(l)
 	case .Songs: draw_songs_page(l)
 	}
+	fill_rect(l.canvas, 0, l.bottom, l.canvas.width, l.canvas.height - l.bottom, COLOR_BACKGROUND) // under the navigation bar
 
 	fill_rect(l.canvas, 0, 0, l.canvas.width, l.top, COLOR_BACKGROUND)
 	strip_color := [Screen_Mood]u32{.Waiting = COLOR_WAITING, .Good = COLOR_GOOD, .Bad = COLOR_BAD}
@@ -107,10 +121,10 @@ draw_packs_page :: proc(l: Layout) {
 
 	// The results: for song searches one row per song (its pack above it), else one per pack.
 	list_height := len(state.results) * l.list_row
-	state.results_scroll = clamp(state.results_scroll, 0, max(list_height - (canvas.height - list_top), 0))
+	state.results_scroll = clamp(state.results_scroll, 0, max(list_height - (l.bottom - list_top), 0))
 	for result, i in state.results {
 		top := list_top + i * l.list_row - state.results_scroll
-		if top + l.list_row <= list_top || top >= canvas.height do continue
+		if top + l.list_row <= list_top || top >= l.bottom do continue
 		fill_rect(canvas, 0, top, canvas.width, l.list_row, u32(COLOR_ROW_ALT) if i % 2 == 1 else u32(COLOR_BACKGROUND))
 		name := strings.to_upper(result.name, context.temp_allocator)
 		if result.matched != "" {
@@ -121,7 +135,7 @@ draw_packs_page :: proc(l: Layout) {
 			details := fmt.tprintf("%s  %d SONGS%s", size_text(result.bytes), result.songs, "  SM5" if result.needs_sm5 else "")
 			draw_two_lines(l, top, name, details, COLOR_TEXT, COLOR_DIM)
 		}
-		append(&state.hits, Hit{top = max(top, list_top), bottom = top + l.list_row, target = Pack_Tap{index = i}})
+		append(&state.hits, Hit{top = max(top, list_top), bottom = min(top + l.list_row, l.bottom), target = Pack_Tap{index = i}})
 	}
 	if len(state.results) == 0 {
 		draw_text(canvas, "NO PACKS FOUND YET.", MARGIN_CELLS * CELL_WIDTH * scale, list_top + 3 * scale, scale, COLOR_DIM)
@@ -151,14 +165,19 @@ draw_songs_page :: proc(l: Layout) {
 	list_top := pack_top + l.list_row + scale
 
 	// The song list first, so the rows above cover any part scrolled under them.
+	fold_height := SYNC_FOLD_LINES * CELL_HEIGHT * scale + 3 * scale
 	list_height := len(state.songs) * l.list_row
-	state.scroll = clamp(state.scroll, 0, max(list_height - (canvas.height - list_top), 0))
+	if state.fold_open >= 0 && state.fold_open < len(state.songs) do list_height += fold_height
+	state.scroll = clamp(state.scroll, 0, max(list_height - (l.bottom - list_top), 0))
+	row_top := list_top - state.scroll
 	for song, i in state.songs {
-		top := list_top + i * l.list_row - state.scroll
-		if top + l.list_row <= list_top || top >= canvas.height do continue
+		top := row_top
+		height := l.list_row + (fold_height if i == state.fold_open else 0)
+		row_top += height
+		if top + height <= list_top || top >= l.bottom do continue
 		background := u32(COLOR_ROW_ALT) if i % 2 == 1 else u32(COLOR_BACKGROUND)
 		if i == state.highlight do background = COLOR_HIGHLIGHT
-		fill_rect(canvas, 0, top, canvas.width, l.list_row, background)
+		fill_rect(canvas, 0, top, canvas.width, height, background)
 
 		details := fmt.tprintf("%s  %d FILES", megabytes(song.bytes), song.files)
 		if i == state.copying {
@@ -171,10 +190,24 @@ draw_songs_page :: proc(l: Layout) {
 				details = fmt.tprintf("%s %d%%", "CONVERTING TO OGG" if status.step == .Converting else "SHRINKING THE OGG", status.percent)
 				if status.pass > 1 do details = fmt.tprintf("SMALLER %d%% (TRY %d)", status.percent, status.pass)
 			}
+			if status.step == .Measuring do details = "CHECKING THE SYNC ..."
 			fill_rect(canvas, 0, top, int(f32(canvas.width) * fraction), l.list_row, COLOR_ACTIVE)
 		}
-		draw_two_lines(l, top, strings.to_upper(song.name, context.temp_allocator), details, COLOR_TEXT, COLOR_DIM)
-		append(&state.hits, Hit{top = max(top, list_top), bottom = top + l.list_row, target = Song_Tap{index = i}})
+		mark := sync_mark(song.sync) if i != state.copying else ""
+		mark_width := (len(mark) + 2) * CELL_WIDTH * scale if mark != "" else 0
+		draw_two_lines(l, top, strings.to_upper(song.name, context.temp_allocator), details, COLOR_TEXT, COLOR_DIM, l.columns - (len(mark) + 2 if mark != "" else 0))
+		row_bottom := min(top + l.list_row, l.bottom)
+		if mark != "" {
+			// The mark at the second line's right end; tapping it opens or closes the foldout.
+			mark_left := canvas.width - mark_width - MARGIN_CELLS * CELL_WIDTH * scale
+			mark_y := top + 3 * scale + CELL_HEIGHT * scale
+			loud := song.sync.state == .Measured && abs(song.sync.shift_ms) > SYNC_STRONG_MS
+			fill_rect(canvas, mark_left, mark_y - scale, mark_width, CELL_HEIGHT * scale, COLOR_BAD if loud else COLOR_KEY)
+			draw_text(canvas, mark, mark_left + CELL_WIDTH * scale, mark_y, scale, COLOR_TEXT if loud || song.sync.state == .Measured else COLOR_DIM)
+			append(&state.hits, Hit{top = max(top, list_top), bottom = row_bottom, left = mark_left - CELL_WIDTH * scale, right = canvas.width, target = Sync_Fold{index = i}})
+		}
+		if i == state.fold_open do draw_sync_fold(l, top + l.list_row, song.sync)
+		append(&state.hits, Hit{top = max(top, list_top), bottom = row_bottom, target = Song_Tap{index = i}})
 	}
 	if len(state.songs) == 0 {
 		message := "FIND A PACK ON PACKS." if state.pack_id == 0 else "READING THE PACK ..."
@@ -232,13 +265,46 @@ draw_small_button :: proc(l: Layout, left, top, width: int, label: string, lit: 
 	append(&state.hits, Hit{top = top, bottom = top + l.row, left = left, right = left + width, target = target})
 }
 
-// Two lines of text in a list row, each cut to the width only if it truly doesn't fit.
+// Two lines of text in a list row, each cut to the width only if it truly doesn't fit (the second
+// to `second_columns`, when something sits at its right).
 @(private = "file")
-draw_two_lines :: proc(l: Layout, top: int, first, second: string, first_color, second_color: u32) {
+draw_two_lines :: proc(l: Layout, top: int, first, second: string, first_color, second_color: u32, second_columns := -1) {
 	margin := MARGIN_CELLS * CELL_WIDTH * l.scale
 	y := top + 3 * l.scale
 	draw_text(l.canvas, fit(first, l.columns), margin, y, l.scale, first_color)
-	draw_text(l.canvas, fit(second, l.columns), margin, y + CELL_HEIGHT * l.scale, l.scale, second_color)
+	draw_text(l.canvas, fit(second, second_columns if second_columns >= 0 else l.columns), margin, y + CELL_HEIGHT * l.scale, l.scale, second_color)
+}
+
+// "SYNC +9 MS", "SYNC ?", or "" when there's nothing to flag (in sync, or not measured).
+@(private = "file")
+sync_mark :: proc(sync: Song_Sync) -> string {
+	switch sync.state {
+	case .Unmeasured: return ""
+	case .Unsure:     return "SYNC ?"
+	case .Measured:
+		if abs(sync.shift_ms) <= SYNC_MILD_MS do return ""
+		return fmt.tprintf("SYNC %+d MS", int(math.round(sync.shift_ms)))
+	}
+	return ""
+}
+
+// What was measured, and the #OFFSET that would put the notes on the music. Only shown.
+@(private = "file")
+draw_sync_fold :: proc(l: Layout, top: int, sync: Song_Sync) {
+	lines: [SYNC_FOLD_LINES]string
+	if sync.state == .Measured {
+		lines = {
+			fmt.tprintf("NOTES %.1f MS %s", abs(sync.shift_ms), "EARLY" if sync.shift_ms > 0 else "LATE"),
+			fmt.tprintf("NOW  #OFFSET:%.3f;", sync.offset),
+			fmt.tprintf("TRY  #OFFSET:%.3f;", sync.suggested),
+		}
+	} else {
+		lines = {"SYNC COULD NOT BE MEASURED", "TOO FEW CLEAR BEATS.", "CHECK IT ON THE CAB."}
+	}
+	margin := (MARGIN_CELLS + 2) * CELL_WIDTH * l.scale
+	for line, i in lines {
+		draw_text(l.canvas, fit(line, l.columns - 2), margin, top + i * CELL_HEIGHT * l.scale, l.scale, COLOR_TEXT if i == 2 else COLOR_DIM)
+	}
 }
 
 // One line, centred in a row of `height`.

@@ -49,6 +49,7 @@ Song_Row :: struct {
 	name:  string, // heap
 	bytes: i64,
 	files: int,
+	sync:  Song_Sync, // after a copy: how its notes sit on the music
 }
 
 // What the worker tells the screen.
@@ -67,6 +68,7 @@ Copy_Progress :: struct {
 	song:     int,
 	status:   Copy_Status,
 	finished: bool,
+	sync:     Song_Sync, // when finished
 }
 
 Search_Results :: struct {
@@ -218,7 +220,7 @@ do_copy_song :: proc(job: Copy_Song) {
 	notes, copy_problem := copy_song(&anchors, &pack, job.index, destination, job.options, proc(status: Copy_Status) {
 		tell(Copy_Progress{song = copying_song, status = status})
 	})
-	tell(Copy_Progress{song = job.index, finished = true})
+	tell(Copy_Progress{song = job.index, finished = true, sync = notes.sync})
 	if copy_problem.what != "" {
 		say_from_worker(.Bad, copy_problem.what, copy_problem.why)
 		return
