@@ -70,6 +70,16 @@ the overshoot and it is encoded again. Tests on click tracks (CBR with an Info f
 frame) check the clicks land 1105 or 2257 samples late as StepMania plays them, and on the same sample in the Ogg,
 with the same sample count. Below about 45 kbps libvorbis can't go: at the 4.8 MB default that is a 14-minute song.
 
+**The length patch, as built.** ITG2 reads a song's length from the Ogg's last page: its granule position, a
+sample count. The patch (as github.com/LHCGreg/itgoggpatch does it) sets that to 105 s worth of samples and
+recomputes the page's checksum; nothing else in the file changes (12 bytes at most, same file size), and the
+start of the song, so its sync, is untouched. Patched: every Ogg longer than 1:45 (itgoggpatch only takes songs
+over 2:00, which would leave 1:45-2:00 songs reading their real length on the cabinet). Tests check the new
+length with an independent reader (stb_vorbis), every page's checksum with an independent CRC, and that every
+decoded sample up to the stated length is unchanged. Found along the way: a player that trusts the last page's
+granule may drop that final block of audio (stb_vorbis: 576 samples, 13 ms) at the very end; the cabinet's
+behaviour there is to be seen.
+
 **Stock cabinet limits** (from players, to be confirmed on the cabinet): about 50 songs per stick,
 audio under 5 MB and in OGG, songs fading out around 105 s. A modded cabinet (Simply Love theme) may lift
 the length limit.

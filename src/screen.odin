@@ -51,7 +51,8 @@ draw :: proc(app: ^glue.android_app) {
 	status_height := STATUS_ROWS * CELL_HEIGHT * scale
 	folder_top := status_top + status_height + 2 * scale
 	limit_top := folder_top + row
-	pack_top := limit_top + row
+	patch_top := limit_top + row
+	pack_top := patch_top + row
 	list_top := pack_top + row + scale
 
 	// The song list first, so the rows above cover any part scrolled under them.
@@ -106,6 +107,11 @@ draw :: proc(app: ^glue.android_app) {
 	draw_text(canvas, "+", plus_left + (button_width - GLYPH_WIDTH * scale) / 2, label_y, scale)
 	append(&state.hits, Hit{top = limit_top, bottom = limit_top + row, left = minus_left, right = plus_left, target = Audio_Limit_Down{}})
 	append(&state.hits, Hit{top = limit_top, bottom = limit_top + row, left = plus_left, right = canvas.width, target = Audio_Limit_Up{}})
+
+	fill_rect(canvas, 0, patch_top, canvas.width, row - scale, COLOR_HEADER)
+	patch_text := "LENGTH PATCH: ON (OVER 1:45)" if state.length_patch == 1 else "LENGTH PATCH: OFF"
+	draw_row_text(canvas, patch_text, "SWITCH", patch_top, row - scale, scale, columns, COLOR_TEXT)
+	append(&state.hits, Hit{top = patch_top, bottom = patch_top + row, target = Toggle_Length_Patch{}})
 
 	fill_rect(canvas, 0, pack_top, canvas.width, row - scale, COLOR_HEADER)
 	pack_text := fmt.tprintf("PACK #%d: %s", state.pack_id, strings.to_upper(state.pack_name, context.temp_allocator))

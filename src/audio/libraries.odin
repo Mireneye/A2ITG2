@@ -165,6 +165,7 @@ foreign libaudio {
 	ogg_stream_pageout  :: proc(stream: ^Ogg_Stream_State, page: ^Ogg_Page) -> c.int ---
 	ogg_stream_flush    :: proc(stream: ^Ogg_Stream_State, page: ^Ogg_Page) -> c.int ---
 	ogg_page_eos        :: proc(page: ^Ogg_Page) -> c.int ---
+	ogg_page_checksum_set :: proc(page: ^Ogg_Page) ---
 }
 
 // ---- libvorbis (with vorbisenc) ----

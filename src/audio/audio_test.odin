@@ -147,3 +147,104 @@ progress_climbs_to_100_in_order :: proc(t: ^testing.T) {
 	testing.expect_value(t, seen[len(seen) - 1], 100)
 	for i in 1..<len(seen) do testing.expectf(t, seen[i] > seen[i - 1], "percent went %d then %d", seen[i - 1], seen[i])
 }
+
+// Ogg's page checksum written out independently of libogg (CRC-32, polynomial 0x04c11db7, no
+// reflection, starting at 0, over the page with its checksum field zeroed).
+ogg_crc :: proc(page: []u8) -> u32 {
+	crc: u32
+	for i in 0..<len(page) {
+		b := page[i] if i < 22 || i > 25 else 0
+		crc ~= u32(b) << 24
+		for _ in 0..<8 do crc = (crc << 1) ~ 0x04c11db7 if crc & 0x80000000 != 0 else crc << 1
+	}
+	return crc
+}
+
+// Every page's stored checksum matches, and the number of pages.
+check_all_pages :: proc(t: ^testing.T, ogg: []u8) -> (pages: int) {
+	at := 0
+	for at < len(ogg) {
+		segments := int(ogg[at + 26])
+		body := 0
+		for size in ogg[at + 27:][:segments] do body += int(size)
+		end := at + 27 + segments + body
+		stored := u32(ogg[at+22]) | u32(ogg[at+23]) << 8 | u32(ogg[at+24]) << 16 | u32(ogg[at+25]) << 24
+		testing.expectf(t, stored == ogg_crc(ogg[at:end]), "page %d: checksum %x, should be %x", pages, stored, ogg_crc(ogg[at:end]))
+		pages += 1
+		at = end
+	}
+	return
+}
+
+@(test)
+length_patch_sets_the_reported_length :: proc(t: ^testing.T) {
+	result, problem := mp3_to_ogg(load(t, "busy.mp3"), 1_000_000) // 10 s
+	defer delete(result.ogg)
+	testing.expect_value(t, problem, Convert_Problem.None)
+	original := make([]u8, len(result.ogg), context.temp_allocator)
+	copy(original, result.ogg)
+
+	// The real rule (over 1:45) leaves a 10-second song alone, byte for byte.
+	untouched := ogg_length_patch(result.ogg)
+	testing.expect(t, !untouched.patched)
+	testing.expect(t, abs(untouched.reported_seconds - result.seconds) < 0.01)
+	testing.expect(t, string(result.ogg) == string(original))
+
+	// Scaled down (over 8 s, patch to 5 s) so a short test file exercises it.
+	patch := ogg_length_patch(result.ogg, patched_seconds = 5, if_longer_than = 8)
+	testing.expect_value(t, patch.problem, Patch_Problem.None)
+	testing.expect(t, patch.patched)
+
+	// Read back by a different Ogg reader: the length a player reads is now 5 s.
+	error: stb.Error
+	reader := stb.open_memory(raw_data(result.ogg), i32(len(result.ogg)), &error, nil)
+	testing.expect(t, reader != nil)
+	if reader != nil {
+		testing.expect_value(t, int(stb.stream_length_in_samples(reader)), 5 * result.sample_rate)
+		stb.close(reader)
+	}
+	check_all_pages(t, result.ogg)
+
+	// Only the last page's granule and checksum changed: 12 bytes at most.
+	changed := 0
+	for i in 0..<len(original) do if original[i] != result.ogg[i] do changed += 1
+	testing.expectf(t, changed > 0 && changed <= 12, "%d bytes changed", changed)
+}
+
+@(test)
+length_patch_refuses_what_isnt_ogg_vorbis :: proc(t: ^testing.T) {
+	junk := make([]u8, 1000, context.temp_allocator)
+	testing.expect_value(t, ogg_length_patch(junk).problem, Patch_Problem.Not_Ogg_Vorbis)
+	mp3 := load(t, "busy.mp3")
+	testing.expect_value(t, ogg_length_patch(mp3).problem, Patch_Problem.Not_Ogg_Vorbis)
+}
+
+@(test)
+length_patch_leaves_the_audio_and_sync_alone :: proc(t: ^testing.T) {
+	mp3 := load(t, "click_cbr_info.mp3") // 3 s, clicks at known samples
+	result, problem := mp3_to_ogg(mp3, 1_000_000)
+	defer delete(result.ogg)
+	testing.expect_value(t, problem, Convert_Problem.None)
+	before, channels := decode_ogg_all(t, result.ogg)
+
+	// Patched to read as 2 s: an end-of-song change on a song that lasts longer.
+	patch := ogg_length_patch(result.ogg, patched_seconds = 2, if_longer_than = 1)
+	testing.expect(t, patch.patched)
+	after, _ := decode_ogg_all(t, result.ogg)
+
+	// Every sample a player decodes up to the stated length is the same, so the clicks (and the
+	// chart's sync) sit exactly where they were.
+	compared := min(len(before), len(after), 2 * result.sample_rate * channels)
+	same := true
+	for i in 0..<compared do if before[i] != after[i] {
+		same = false
+		testing.expectf(t, false, "sample %d differs after patching", i / channels)
+		break
+	}
+	testing.expect(t, same)
+	click := peak_near(after, channels, 44100 + DECODER_DELAY + LAME_DELAY + INFO_FRAME, 4000)
+	testing.expectf(t, abs(click - (44100 + DECODER_DELAY + LAME_DELAY + INFO_FRAME)) <= PEAK_TOLERANCE, "first click moved to %d", click)
+	// Past the stated length a player may keep going: stb_vorbis plays on and drops only the last
+	// block (576 samples here), since it takes the last page's granule as "trim this page".
+	fmt.printfln("length patch: %d samples decoded before patching, %d after (patched to %d)", len(before) / channels, len(after) / channels, 2 * result.sample_rate)
+}

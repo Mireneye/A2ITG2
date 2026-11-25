@@ -23,9 +23,9 @@ Open_Pack :: struct {
 }
 
 Copy_Song :: struct {
-	index:       int,
-	tree:        string, // the picked folder's address (heap; the worker frees it)
-	audio_limit: int,    // bytes an Ogg may take
+	index:   int,
+	tree:    string, // the picked folder's address (heap; the worker frees it)
+	options: Copy_Options,
 }
 
 Job :: union {
@@ -159,7 +159,7 @@ do_copy_song :: proc(job: Copy_Song) {
 	defer delete(destination.document_id)
 
 	copying_song = job.index
-	notes, copy_problem := copy_song(&anchors, &pack, job.index, destination, job.audio_limit, proc(status: Copy_Status) {
+	notes, copy_problem := copy_song(&anchors, &pack, job.index, destination, job.options, proc(status: Copy_Status) {
 		tell(Copy_Progress{song = copying_song, status = status})
 	})
 	tell(Copy_Progress{song = job.index, finished = true})
@@ -169,6 +169,8 @@ do_copy_song :: proc(job: Copy_Song) {
 	}
 	done_line := fmt.tprintf("COPIED %s (%d FILES). SAFE TO UNPLUG THE STICK.", song.name, notes.files)
 	if notes.videos_left_out > 0 do done_line = fmt.tprintf("%s %d VIDEO(S) LEFT OUT.", done_line, notes.videos_left_out)
+	if notes.length_patched do done_line = fmt.tprintf("%s LENGTH PATCHED: %s NOW READS AS 1:45.", done_line, minutes(notes.real_seconds))
+	if notes.patch_failed do done_line = fmt.tprintf("%s ITS OGG COULDN'T BE LENGTH PATCHED.", done_line)
 	switch {
 	case notes.converted:
 		say_from_worker(.Good, done_line, fmt.tprintf("MP3 CONVERTED TO OGG: %s AT %d KBPS.", megabytes(i64(notes.ogg_bytes)), notes.ogg_bitrate / 1000))
@@ -186,6 +188,12 @@ BYTES_PER_MB :: 1_000_000
 
 megabytes :: proc(bytes: i64) -> string {
 	return fmt.tprintf("%.1f MB", f64(bytes) / BYTES_PER_MB)
+}
+
+// 151.4 -> "2:31"
+minutes :: proc(seconds: f64) -> string {
+	whole := int(seconds)
+	return fmt.tprintf("%d:%02d", whole / 60, whole % 60)
 }
 
 megabytes_decimal :: proc(bytes: int) -> string {

@@ -6,6 +6,7 @@ The screen, top to bottom:
 	the last status lines
 	STICK row   the folder songs are copied into; tap to pick another
 	AUDIO row   the most an Ogg may take (MP3s are converted to fit); tap - or + to change it
+	PATCH row   whether Oggs over 1:45 are length patched to read as 1:45; tap to switch
 	PACK row    the pack being browsed; tap to read it again
 	the pack's songs; tap one to copy it into the stick folder (videos are left out)
 
@@ -50,12 +51,14 @@ Tap_Target :: union {
 	Change_Folder,
 	Audio_Limit_Down,
 	Audio_Limit_Up,
+	Toggle_Length_Patch,
 	Reload_Pack,
 	Song_Tap,
 }
 Change_Folder    :: struct {}
 Audio_Limit_Down :: struct {}
 Audio_Limit_Up   :: struct {}
+Toggle_Length_Patch :: struct {}
 Reload_Pack      :: struct {}
 Song_Tap         :: struct { index: int }
 
@@ -74,6 +77,7 @@ App_State :: struct {
 	folder:        string, // the picked folder's address ("" until picked)
 	folder_ok:     bool,
 	audio_limit:   int, // bytes
+	length_patch:  int, // 1 on, 0 off (an int so it sits in the settings table like the rest)
 	picker_open:   bool,
 	listener_set:  bool,
 
@@ -197,6 +201,9 @@ on_tap :: proc(app: ^glue.android_app, x, y: int) {
 			set_audio_limit(state.audio_limit - AUDIO_LIMIT_STEP)
 		case Audio_Limit_Up:
 			set_audio_limit(state.audio_limit + AUDIO_LIMIT_STEP)
+		case Toggle_Length_Patch:
+			state.length_patch = 1 - state.length_patch
+			save_settings()
 		case Change_Folder:
 			if state.picker_open do return
 			if err := open_folder_picker(app); err != "" {
@@ -217,7 +224,8 @@ on_tap :: proc(app: ^glue.android_app, x, y: int) {
 			case:
 				state.copying = target.index
 				state.progress = {song = target.index}
-				worker_ask(Copy_Song{index = target.index, tree = strings.clone(state.folder), audio_limit = state.audio_limit})
+				options := Copy_Options{audio_limit = state.audio_limit, length_patch = state.length_patch == 1}
+				worker_ask(Copy_Song{index = target.index, tree = strings.clone(state.folder), options = options})
 			}
 		}
 		draw(app)
@@ -230,23 +238,40 @@ set_audio_limit :: proc(bytes: int) {
 	save_settings()
 }
 
-// settings.txt: one "name=value" per line.
+// The saved settings: one entry each. Saved in settings.txt as "key=value" lines.
+Setting :: struct {
+	key:      string,
+	value:    ^int,
+	default:  int,
+	min, max: int,
+}
+
+settings_table :: proc() -> [2]Setting {
+	return {
+		{key = "audio_limit_bytes", value = &state.audio_limit,  default = DEFAULT_AUDIO_LIMIT, min = AUDIO_LIMIT_MIN, max = AUDIO_LIMIT_MAX},
+		{key = "length_patch",      value = &state.length_patch, default = 1,                   min = 0,               max = 1},
+	}
+}
+
 load_settings :: proc() {
-	state.audio_limit = DEFAULT_AUDIO_LIMIT
+	table := settings_table()
+	for setting in table do setting.value^ = setting.default
 	text, err := os.read_entire_file(fmt.tprintf("%s/%s", state.private_dir, SETTINGS_FILE), context.temp_allocator)
 	if err != nil do return
 	lines := string(text)
 	for line in strings.split_lines_iterator(&lines) {
-		name, _, value := strings.partition(strings.trim_space(line), "=")
-		if name == "audio_limit_bytes" {
-			if bytes, ok := strconv.parse_int(value); ok do state.audio_limit = clamp(bytes, AUDIO_LIMIT_MIN, AUDIO_LIMIT_MAX)
+		key, _, value := strings.partition(strings.trim_space(line), "=")
+		for setting in table {
+			if setting.key != key do continue
+			if number, ok := strconv.parse_int(value); ok do setting.value^ = clamp(number, setting.min, setting.max)
 		}
 	}
 }
 
 save_settings :: proc() {
-	text := fmt.tprintf("audio_limit_bytes=%d\n", state.audio_limit)
-	if err := os.write_entire_file(fmt.tprintf("%s/%s", state.private_dir, SETTINGS_FILE), transmute([]u8)text); err != nil {
+	text := strings.builder_make(context.temp_allocator)
+	for setting in settings_table() do fmt.sbprintf(&text, "%s=%d\n", setting.key, setting.value^)
+	if err := os.write_entire_file(fmt.tprintf("%s/%s", state.private_dir, SETTINGS_FILE), text.buf[:]); err != nil {
 		say(.Bad, "COULD NOT SAVE THE SETTINGS.")
 	}
 }

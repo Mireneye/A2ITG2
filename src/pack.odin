@@ -142,10 +142,12 @@ find_songs :: proc(pack: ^Pack) {
 // other chart formats and leftovers (".old" files) without guessing from names. A folder without
 // an .sm (ITG2 reads no other format) copies nothing.
 //
-// MP3 audio is converted to Ogg Vorbis within `audio_limit` bytes (src/audio: sample-exact, so the
-// chart's sync holds) and the chart's #MUSIC is rewritten to the new name. The chart is written last:
-// a song folder is complete once its chart is there.
-copy_song :: proc(anchors: ^tls.Trust_Anchors, pack: ^Pack, index: int, destination: Folder_Ref, audio_limit: int, progress: Copy_Progress_Proc) -> (notes: Copy_Notes, problem: Pack_Problem) {
+// MP3 audio is converted to Ogg Vorbis within the audio limit (src/audio: sample-exact, so the chart's
+// sync holds) and the chart's #MUSIC is rewritten to the new name. With the length patch on, an Ogg
+// longer than 1:45 (converted or copied) is patched to read as 1:45. The chart is written last: a song
+// folder is complete once its chart is there.
+copy_song :: proc(anchors: ^tls.Trust_Anchors, pack: ^Pack, index: int, destination: Folder_Ref, options: Copy_Options, progress: Copy_Progress_Proc) -> (notes: Copy_Notes, problem: Pack_Problem) {
+	audio_limit := options.audio_limit
 	song := pack.songs[index]
 
 	chart := -1
@@ -205,6 +207,7 @@ copy_song :: proc(anchors: ^tls.Trust_Anchors, pack: ^Pack, index: int, destinat
 			}, &conversion_progress)
 			if convert_problem != .None do return notes, convert_problem_text(convert_problem, audio_limit)
 			defer delete(conversion.ogg)
+			if options.length_patch do apply_length_patch(conversion.ogg, &notes)
 			ogg_name := ogg_name_for(pack, song, file_name)
 			if write_problem := write_file(folder, ogg_name, conversion.ogg, "audio/ogg"); write_problem != "" {
 				return notes, {fmt.tprintf("COULD NOT WRITE %s", strings.to_upper(ogg_name, context.temp_allocator)), write_problem}
@@ -217,6 +220,9 @@ copy_song :: proc(anchors: ^tls.Trust_Anchors, pack: ^Pack, index: int, destinat
 			continue
 		}
 		if entry_index == music && len(data) > audio_limit do notes.audio_over_limit = true
+		if entry_index == music && options.length_patch && strings.to_lower(extension_of(file_name), context.temp_allocator) == ".ogg" {
+			apply_length_patch(data, &notes)
+		}
 
 		if write_problem := write_file(folder, file_name, data); write_problem != "" {
 			return notes, {fmt.tprintf("COULD NOT WRITE %s", strings.to_upper(file_name, context.temp_allocator)), write_problem}
@@ -232,6 +238,19 @@ copy_song :: proc(anchors: ^tls.Trust_Anchors, pack: ^Pack, index: int, destinat
 	notes.files += 1
 	progress({step = .Fetching, done = total, total = total})
 	return notes, {}
+}
+
+Copy_Options :: struct {
+	audio_limit:  int,  // bytes an Ogg may take
+	length_patch: bool, // make Oggs over 1:45 read as 1:45
+}
+
+@(private = "file")
+apply_length_patch :: proc(ogg: []u8, notes: ^Copy_Notes) {
+	patch := audio.ogg_length_patch(ogg)
+	notes.real_seconds = patch.reported_seconds
+	notes.length_patched = patch.patched
+	notes.patch_failed = patch.problem != .None
 }
 
 Copy_Step :: enum u8 {
@@ -265,6 +284,9 @@ Copy_Notes :: struct {
 	ogg_bytes:        int,
 	ogg_bitrate:      int,
 	audio_over_limit: bool, // an Ogg already, but bigger than the limit (re-encoding Oggs comes later)
+	length_patched:   bool, // the Ogg now reads as 1:45
+	patch_failed:     bool, // the Ogg couldn't be read for patching (copied unpatched)
+	real_seconds:     f64,
 }
 
 @(private = "file")

@@ -3,10 +3,11 @@
 An Android app that takes songs from StepMania pack sites onto an ITG2 arcade cabinet's USB stick,
 through the phone's USB OTG port. Written in Odin; a functional app, not a pretty one.
 
-**Status: copying songs, MP3s converted.** The app reads a pack's table of contents over HTTPS (a few small
+**Status: copying songs, MP3s converted, length patch.** The app reads a pack's table of contents over HTTPS (a few small
 byte ranges, not the whole pack), lists its songs, and copies a tapped song onto the stick: its `.sm` chart and
 the files the chart names, without videos. MP3 audio is converted to Ogg Vorbis within the audio limit, with
-the sync kept to the sample, and the chart's `#MUSIC` is pointed at the new file.
+the sync kept to the sample, and the chart's `#MUSIC` is pointed at the new file. With the length patch on,
+Oggs over 1:45 are patched so the cabinet reads them as 1:45 (r21 cabinets then play them through).
 See [docs/DESIGN.md](docs/DESIGN.md) for the plan and [docs/MAP.md](docs/MAP.md) for where things live.
 
 ## Getting the app
@@ -42,9 +43,11 @@ Then:
    "In The Groove 2" folder's Songs folder. The app remembers it.
 3. **AUDIO LIMIT** is the most a song's Ogg may take; tap - or + to change it (0.1 MB steps). MP3s are
    converted to the best quality that fits.
-4. The pack (for now always #10850, a small test pack) is read on start; its songs appear below.
+4. **LENGTH PATCH** (on by default): songs over 1:45 get the Ogg length patch, so an r21 cabinet reads them
+   as 1:45 and plays all of them. Tap to switch it off. (r23 cabinets cut custom songs at 2:00 regardless.)
+5. The pack (for now always #10850, a small test pack) is read on start; its songs appear below.
    Tap **PACK** to read it again.
-5. Tap a song. Its row fills as it copies: by files, then by percent while an MP3 becomes an Ogg (`CONVERTING 37%`;
+6. Tap a song. Its row fills as it copies: by files, then by percent while an MP3 becomes an Ogg (`CONVERTING 37%`;
    `SMALLER .. (TRY 2)` if the first try came out over the limit). The
    top strip turns green with `SAFE TO UNPLUG`.
 
