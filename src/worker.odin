@@ -26,6 +26,7 @@ Copy_Song :: struct {
 	index:   int,
 	tree:    string, // the picked folder's address (heap; the worker frees it)
 	options: Copy_Options,
+	replace: bool,   // the song is on the stick already: delete that copy first (the user said yes)
 }
 
 Load_Catalog :: struct {
@@ -89,7 +90,21 @@ Preview_Stick :: struct {
 	folder_id: string, // heap
 }
 
+// The stick's song folder names (answered with Stick_Names).
+Name_Stick :: struct {
+	tree: string, // heap
+}
+
+Delete_Stick_Song :: struct {
+	stamp:     int,
+	tree:      string, // heap
+	folder_id: string, // heap
+	name:      string, // heap; for the status line
+}
+
 Job :: union {
+	Name_Stick,
+	Delete_Stick_Song,
 	Preview_Song,
 	Preview_Stick,
 	Open_Pack,
@@ -137,6 +152,17 @@ Search_Results :: struct {
 Stick_Listed :: struct {
 	stamp: int,
 	songs: []Stick_Song, // heap
+	free:  i64,          // bytes free on the stick, -1 unknown
+	ok:    bool,
+}
+
+// The names of the stick's song folders (stick_name_key), for marking a pack's songs ON STICK.
+Stick_Names :: struct {
+	names: []string, // heap
+}
+
+Stick_Deleted :: struct {
+	stamp: int,
 	ok:    bool,
 }
 
@@ -174,6 +200,8 @@ Preview_Ready :: struct {
 }
 
 Message :: union {
+	Stick_Names,
+	Stick_Deleted,
 	Preview_Ready,
 	Say,
 	Pack_Ready,
@@ -264,9 +292,9 @@ worker_main :: proc() {
 		case Search_Packs: do_search(j)
 		case List_Stick:
 			defer delete(j.tree)
-			songs, problem := stick_list(j.tree)
+			songs, free, problem := stick_list(j.tree)
 			if problem != "" do say_from_worker(.Bad, "COULD NOT LIST THE STICK'S SONGS", problem)
-			tell(Stick_Listed{stamp = j.stamp, songs = songs, ok = problem == ""})
+			tell(Stick_Listed{stamp = j.stamp, songs = songs, free = free, ok = problem == ""})
 		case Open_Stick_Song:
 			defer delete(j.tree)
 			defer delete(j.folder_id)
@@ -274,6 +302,21 @@ worker_main :: proc() {
 			if problem != "" do say_from_worker(.Bad, "COULD NOT READ THIS SONG'S CHART", problem)
 			tell(Stick_Opened{index = j.index, stamp = j.stamp, chart = chart})
 		case Set_Stick_Offset: do_set_stick_offset(j)
+		case Name_Stick:
+			defer delete(j.tree)
+			names, problem := stick_names(j.tree)
+			if problem == "" do tell(Stick_Names{names = names})
+		case Delete_Stick_Song:
+			defer delete(j.tree)
+			defer delete(j.folder_id)
+			defer delete(j.name)
+			problem := stick_delete(j.tree, j.folder_id)
+			if problem != "" {
+				say_from_worker(.Bad, fmt.tprintf("COULD NOT DELETE %s", strings.to_upper(j.name, context.temp_allocator)), problem)
+			} else {
+				say_from_worker(.Good, fmt.tprintf("DELETED %s FROM THE STICK.", strings.to_upper(j.name, context.temp_allocator)), "SAFE TO UNPLUG THE STICK.")
+			}
+			tell(Stick_Deleted{stamp = j.stamp, ok = problem == ""})
 		case Reset_Stick_Song:
 			defer delete(j.tree)
 			defer delete(j.sm_id)
@@ -379,6 +422,17 @@ do_copy_song :: proc(job: Copy_Song) {
 		return
 	}
 	defer delete(destination.document_id)
+
+	if job.replace {
+		if existing := stick_find(job.tree, song.name); existing != "" {
+			defer delete(existing)
+			if delete_problem := stick_delete(job.tree, existing); delete_problem != "" {
+				say_from_worker(.Bad, "COULD NOT DELETE THE OLD COPY", delete_problem)
+				tell(Copy_Progress{song = job.index, finished = true})
+				return
+			}
+		}
+	}
 
 	copying_song = job.index
 	notes, copy_problem := copy_song(&anchors, &pack, job.index, destination, job.options, proc(status: Copy_Status) {

@@ -17,7 +17,8 @@ The screen, top to bottom (screen.odin draws it):
 	AUDIO row   the most an Ogg may take (MP3s are converted to fit); tap - or + to change it
 	PATCH row   whether Oggs over 1:45 are length patched to read as 1:45; tap to switch
 	PACK row    the open pack; tap to read it again
-	the pack's songs; tap one to copy it into the stick folder (videos are left out). The button at a
+	the pack's songs; tap one to copy it into the stick folder (videos are left out). Songs already on
+	the stick say ON STICK; copying one again asks first, then replaces it. The button at a
 	song's right plays it from its preview point (#SAMPLESTART), and pauses it; its audio is kept in
 	the app, so copying it afterwards doesn't download it again. A copied song
 	whose notes sit off its music carries a sync mark at the right (SYNC +9 MS, or SYNC ? when it
@@ -25,7 +26,7 @@ The screen, top to bottom (screen.odin draws it):
 	Nothing is changed: the sync is the user's to set (on SYNC).
 
 	SYNC page: change the sync of songs already on the stick (stick.odin)
-	STICK row   how many song folders the stick folder has; tap to read it again
+	STICK row   how many song folders the stick folder has and the space left; tap to read it again
 	CLICKS row  the metronome while a song plays here: how loud (- and +, heard at once), and
 	            OFF / BEATS (the chart's beats) / NOTES (every note: hears the chart's own timing,
 	            even when its BPM is wrong)
@@ -34,7 +35,8 @@ The screen, top to bottom (screen.odin draws it):
 	            its #OFFSET now and the original, and how far the notes moved
 	            STEP     0.1 / 1 / 10 / 100 ms
 	            NOTES EARLIER / NOTES LATER   move the notes by a step (written to the stick at once)
-	            MEASURE  how its notes sit on its music; RESET  the original chart back
+	            MEASURE  how its notes sit on its music; RESET  the original chart back;
+	            DELETE   the song off the stick, after Android's own "are you sure" dialog
 	            Before a chart is first changed, the original is kept in the app (stick.odin).
 
 The screen keeps clear of the phone's status and navigation bars (insets.odin).
@@ -119,6 +121,7 @@ Tap_Target :: union {
 	Nudge_Notes,
 	Measure_Stick,
 	Reset_Stick,
+	Delete_Stick,
 }
 Show_Page         :: struct { page: Page }
 Pick_Search_Kind  :: struct { kind: Search_Kind }
@@ -147,6 +150,15 @@ Pick_Sync_Step   :: struct { step: int }
 Nudge_Notes      :: struct { earlier: bool }
 Measure_Stick    :: struct {}
 Reset_Stick      :: struct {}
+Delete_Stick     :: struct {}
+
+// What a yes in the confirmation dialog (confirm.odin) does. One question at a time.
+Confirm_Action :: union {
+	Confirm_Delete,
+	Confirm_Replace,
+}
+Confirm_Delete  :: struct { stamp: int, folder_id: string, name: string } // heap strings
+Confirm_Replace :: struct { index: int, pack_id: int }
 
 // A song on the stick, as the SYNC page knows it.
 Stick_Row :: struct {
@@ -211,6 +223,9 @@ App_State :: struct {
 	stick_rows:    []Stick_Row,
 	stick_stamp:   int,  // bumped on every new list; answers about an older one are dropped
 	stick_listing: bool,
+	stick_free:    i64,  // bytes free on the stick, -1 unknown
+	stick_names:   map[string]bool, // the stick's song folders (stick_name_key), for ON STICK on SONGS
+	confirming:    Confirm_Action,  // waiting for the dialog's answer (nil: no dialog open)
 	sync_open:     int,  // the open stick song, or -1
 	sync_step:     int,  // index into SYNC_STEPS (a saved setting)
 	sync_scroll:   int,
@@ -235,6 +250,7 @@ main :: proc() {
 	state.fold_open = -1
 	state.sync_open = -1
 	state.preview_song = -1
+	state.stick_free = -1
 	load_settings()
 
 	listen_for_picker_result(app)
@@ -262,6 +278,7 @@ main :: proc() {
 		}
 		handle_worker_messages()
 		handle_text_events()
+		if yes, answered := take_confirm_answer(); answered do handle_confirm_answer(yes)
 		if player_finished() {
 			stop_preview() // played to the end
 			request_draw()
@@ -312,6 +329,7 @@ set_folder :: proc(address: string) {
 	delete(state.folder)
 	state.folder = strings.clone(address)
 	state.folder_ok = true
+	ask_stick_names()
 	request_draw()
 }
 
@@ -347,6 +365,7 @@ handle_worker_messages :: proc() {
 			delete(m.lines[1])
 		case Pack_Ready:
 			if state.preview_page == .Songs do stop_preview()
+			ask_stick_names()
 			free_song_rows()
 			state.pack_id, state.pack_name, state.songs = m.id, m.name, m.rows
 			state.fold_open = -1
@@ -355,6 +374,7 @@ handle_worker_messages :: proc() {
 		case Copy_Progress:
 			state.progress = m
 			state.copying = -1 if m.finished else m.song
+			if m.finished do ask_stick_names()
 			if m.finished && m.song < len(state.songs) do state.songs[m.song].sync = m.sync
 		case Search_Results:
 			if m.stamp != state.search_stamp {
@@ -363,12 +383,23 @@ handle_worker_messages :: proc() {
 			}
 			free_pack_rows(state.results)
 			state.results, state.results_scroll = m.rows, 0
+		case Stick_Names:
+			for name in state.stick_names do delete(name)
+			clear(&state.stick_names)
+			for name in m.names do state.stick_names[name] = true
+			delete(m.names) // the map keeps the strings
+		case Stick_Deleted:
+			if m.ok {
+				list_stick()
+				ask_stick_names()
+			}
 		case Stick_Listed:
 			if m.stamp != state.stick_stamp {
 				stick_songs_destroy(m.songs)
 				continue
 			}
 			state.stick_listing = false
+			state.stick_free = m.free
 			if state.preview_page == .Sync do stop_preview()
 			free_stick_rows()
 			state.stick_rows = make([]Stick_Row, len(m.songs))
@@ -450,6 +481,11 @@ on_tap :: proc(app: ^glue.android_app, x, y: int) {
 			row.measuring = true
 			say(.Waiting, "MEASURING THE SYNC ...", "READING THE SONG FROM THE STICK TAKES A FEW SECONDS.")
 			worker_ask(Measure_Stick_Song{index = state.sync_open, stamp = state.stick_stamp, tree = strings.clone(state.folder), sm_id = strings.clone(row.chart.sm_id), music_id = strings.clone(row.chart.music_id)})
+		case Delete_Stick:
+			row := open_stick_row()
+			if row == nil do return
+			ask(app, Confirm_Delete{stamp = state.stick_stamp, folder_id = strings.clone(row.song.folder_id), name = strings.clone(row.song.name)}, "Delete from the stick?",
+				fmt.tprintf("%s will be deleted from the stick, with all its files. This can't be undone.", row.song.name), "Delete")
 		case Reset_Stick:
 			row := open_stick_row()
 			if row == nil || !row.chart.has_backup do return
@@ -533,11 +569,11 @@ on_tap :: proc(app: ^glue.android_app, x, y: int) {
 				say(.Bad, "PICK THE STICK FOLDER FIRST (THE STICK ROW).")
 			case state.copying >= 0:
 				say(.Waiting, "ONE SONG AT A TIME: WAIT FOR THIS COPY TO FINISH.")
+			case song_on_stick(target.index):
+				ask(app, Confirm_Replace{index = target.index, pack_id = state.pack_id}, "Already on the stick",
+					fmt.tprintf("%s is already on the stick. Replace it with a fresh copy? The copy on the stick, sync changes included, will be deleted.", state.songs[target.index].name), "Replace")
 			case:
-				state.copying = target.index
-				state.progress = {song = target.index}
-				options := Copy_Options{audio_limit = state.audio_limit, length_patch = state.length_patch == 1}
-				worker_ask(Copy_Song{index = target.index, tree = strings.clone(state.folder), options = options})
+				start_copy(target.index, replace = false)
 			}
 		}
 		request_draw()
@@ -665,6 +701,61 @@ click_mode :: proc(page: Page) -> Click_Mode {
 stop_preview :: proc() {
 	player_stop()
 	state.preview, state.preview_song = .Idle, -1
+}
+
+start_copy :: proc(index: int, replace: bool) {
+	state.copying = index
+	state.progress = {song = index}
+	options := Copy_Options{audio_limit = state.audio_limit, length_patch = state.length_patch == 1}
+	worker_ask(Copy_Song{index = index, tree = strings.clone(state.folder), options = options, replace = replace})
+}
+
+song_on_stick :: proc(index: int) -> bool {
+	return index >= 0 && index < len(state.songs) && stick_name_key(state.songs[index].name) in state.stick_names
+}
+
+ask_stick_names :: proc() {
+	if state.folder_ok do worker_ask(Name_Stick{tree = strings.clone(state.folder)})
+}
+
+// Opens the confirmation dialog; `action` happens on a yes (handle_confirm_answer).
+ask :: proc(app: ^glue.android_app, action: Confirm_Action, title, message, button: string) {
+	if state.confirming != nil {
+		forget_confirm(action)
+		return // one question at a time
+	}
+	if problem := open_confirm(app, title, message, button); problem != "" {
+		say(.Bad, "COULD NOT ASK:", problem)
+		forget_confirm(action)
+		return
+	}
+	state.confirming = action
+}
+
+handle_confirm_answer :: proc(yes: bool) {
+	action := state.confirming
+	state.confirming = nil
+	defer forget_confirm(action)
+	if !yes do return
+	switch a in action {
+	case Confirm_Delete:
+		if a.stamp != state.stick_stamp do return // the list changed meanwhile: ask again
+		if state.preview_page == .Sync do stop_preview()
+		state.sync_open = -1
+		worker_ask(Delete_Stick_Song{stamp = a.stamp, tree = strings.clone(state.folder), folder_id = strings.clone(a.folder_id), name = strings.clone(a.name)})
+	case Confirm_Replace:
+		if a.pack_id != state.pack_id || state.copying >= 0 do return
+		start_copy(a.index, replace = true)
+	}
+	request_draw()
+}
+
+@(private = "file")
+forget_confirm :: proc(action: Confirm_Action) {
+	if d, is_delete := action.(Confirm_Delete); is_delete {
+		delete(d.folder_id)
+		delete(d.name)
+	}
 }
 
 list_stick :: proc() {

@@ -7,8 +7,8 @@ Folder access through Android's folder picker (the Storage Access Framework).
 	folder_access_kept     checks a remembered folder is still accessible
 	root_folder, create_folder, write_file
 	                       make folders and files inside the picked folder (files are fsynced)
-	list_children, read_document, overwrite_document
-	                       what a folder holds, reading a file, and replacing a file's contents
+	list_children, read_document, overwrite_document, delete_document, free_bytes
+	                       what a folder holds, reading, replacing and deleting, the drive's free space
 
 A folder is identified by its "address": the picker's content:// URI as text.
 The calls that can fail return "" on success, or a short error to show on screen.
@@ -295,6 +295,36 @@ overwrite_document :: proc(tree, document_id: string, bytes: []u8) -> string {
 	}
 	if posix.fsync(posix.FD(fd)) != .OK do return "COULD NOT FLUSH THE FILE TO THE STICK"
 	return ""
+}
+
+// Deletes a file, or a folder with everything in it. "" or the problem.
+delete_document :: proc(tree, document_id: string) -> string {
+	inner :: proc(tree, document_id: string) -> (deleted: bool, exception: ^java.Throwable) {
+		tree_uri := parse_uri(tree) or_return
+		id := java.string_from(document_id) or_return
+		uri := documents_build_document_uri_using_tree(tree_uri, id) or_return
+		resolver := content_resolver() or_return
+		return documents_delete_document(resolver, uri)
+	}
+	local_frame_scope()
+	deleted, exception := inner(tree, document_id)
+	if exception != nil do return describe(exception)
+	if !deleted do return "ANDROID REFUSED TO DELETE IT"
+	return ""
+}
+
+// Free space on the drive holding a file (any file on the stick will do).
+free_bytes :: proc(tree, file_id: string) -> (bytes: i64, ok: bool) {
+	fd, exception := open_document(tree, file_id, "r")
+	if exception != nil {
+		java.delete_local(exception)
+		return 0, false
+	}
+	if fd < 0 do return 0, false
+	defer posix.close(posix.FD(fd))
+	info: posix.statvfs_t
+	if posix.fstatvfs(posix.FD(fd), &info) != .OK do return 0, false
+	return i64(info.f_bavail) * i64(info.f_frsize), true
 }
 
 @(private = "file")

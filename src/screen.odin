@@ -185,6 +185,7 @@ draw_songs_page :: proc(l: Layout) {
 		fill_rect(canvas, 0, top, canvas.width, height, background)
 
 		details := fmt.tprintf("%s  %d FILES", megabytes(song.bytes), song.files)
+		if song_on_stick(i) do details = fmt.tprintf("ON STICK  %s", megabytes(song.bytes))
 		if i == state.copying {
 			// The row fills as the copy goes: by files, and while converting by the encoding's percent.
 			status := state.progress.status
@@ -305,7 +306,8 @@ draw_sync_page :: proc(l: Layout) {
 	fill_rect(canvas, 0, l.top, canvas.width, list_top - l.top, COLOR_BACKGROUND)
 
 	fill_rect(canvas, 0, header_top, canvas.width, row - scale, COLOR_HEADER)
-	draw_line(l, header_top, row - scale, fmt.tprintf("%d SONGS  TAP TO RELOAD", len(state.stick_rows)), COLOR_TEXT)
+	free := fmt.tprintf("  %s FREE", megabytes(state.stick_free)) if state.stick_free >= 0 else ""
+	draw_line(l, header_top, row - scale, fmt.tprintf("%d SONGS%s", len(state.stick_rows), free), COLOR_TEXT)
 	append(&state.hits, Hit{top = header_top, bottom = header_top + row, target = Reload_Stick{}})
 
 	// The metronome: its volume with - and +, and OFF / BEATS / NOTES.
@@ -372,11 +374,14 @@ draw_sync_panel :: proc(l: Layout, top, list_top: int, song: ^Stick_Row) {
 	panel_buttons(l, buttons_top, list_top, step_labels[:], state.sync_step, proc(i: int) -> Tap_Target { return Pick_Sync_Step{step = i} })
 	nudge_labels := [2]string{"NOTES EARLIER", "NOTES LATER"}
 	panel_buttons(l, buttons_top + row, list_top, nudge_labels[:], -1, proc(i: int) -> Tap_Target { return Nudge_Notes{earlier = i == 0} })
-	// RESET is dim with nothing to undo.
-	tool_labels := [2]string{"MEASURE", "RESET"}
+	// RESET is dim with nothing to undo. DELETE asks first (an Android dialog).
+	tool_labels := [3]string{"MEASURE", "RESET", "DELETE"}
 	panel_buttons(l, buttons_top + 2 * row, list_top, tool_labels[:], -1, dim = -1 if song.chart.has_backup else 1, target_of = proc(i: int) -> Tap_Target {
-		if i == 0 do return Measure_Stick{}
-		return Reset_Stick{}
+		switch i {
+		case 0: return Measure_Stick{}
+		case 1: return Reset_Stick{}
+		}
+		return Delete_Stick{}
 	})
 }
 

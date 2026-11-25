@@ -133,3 +133,11 @@ cursor_close :: proc "contextless" (cursor: ^java.Cursor) -> (exception: ^java.T
 	env->CallVoidMethodA(cursor, method, nil)
 	return take_exception(env)
 }
+
+// Deletes a document; a folder goes with everything in it. False when the provider refused.
+documents_delete_document :: proc "contextless" (resolver: ^java.ContentResolver, document: ^java.Uri) -> (deleted: bool, exception: ^java.Throwable) {
+	@(static) cache: android.jmethodID
+	env, class, method := documents_method(&cache, "deleteDocument", "(Landroid/content/ContentResolver;Landroid/net/Uri;)Z") or_return
+	args := [?]android.jvalue{{l = resolver}, {l = document}}
+	return env->CallStaticBooleanMethodA(class, method, &args[0]) != 0, take_exception(env)
+}

@@ -175,3 +175,12 @@ chart's BPM is wrong, as in hand-placed charts (a made-up high BPM with notes on
 Chobits chart: 50% 64ths, 24% 32nds, just as notes dropped at random would fall), where beat clicks can
 never sit on the music. Row text fits the 30-letter-wide screen: CLICKS label at most 11 letters, slim
 - and +, a switch a fifth of the width for "NOTES".
+
+**Managing the stick.** SYNC's top row shows how many song folders the stick folder has and the space left
+(Android hands out files, not drives, so the free space is read with fstatvfs through any file on the stick).
+DELETE sits inside an opened song's panel, never on a list row, and Android's own dialog asks first, naming
+the song: open, DELETE, confirm, three deliberate taps. Deleting takes the folder with everything in it
+(DocumentsContract.deleteDocument) and the app's backups of its charts. On SONGS, songs whose folder name is
+on the stick (compared in lower case, with the characters FAT can't hold as Android replaces them) say
+ON STICK; copying one again asks, then deletes the old copy before copying, where before it silently made
+a second folder ("Song (1)").

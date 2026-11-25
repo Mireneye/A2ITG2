@@ -32,21 +32,89 @@ stick_songs_destroy :: proc(songs: []Stick_Song) {
 	delete(songs)
 }
 
-// The song folders in the picked folder, by name.
-stick_list :: proc(tree: string) -> (songs: []Stick_Song, problem: string) {
+// The song folders in the picked folder, by name, and the stick's free space (-1 when unknown).
+stick_list :: proc(tree: string) -> (songs: []Stick_Song, free: i64, problem: string) {
 	root, root_problem := root_folder(tree, context.temp_allocator)
-	if root_problem != "" do return nil, root_problem
+	if root_problem != "" do return nil, -1, root_problem
 	children, list_problem := list_children(root)
-	if list_problem != "" do return nil, list_problem
+	if list_problem != "" do return nil, -1, list_problem
 	defer children_destroy(children)
 	out := make([dynamic]Stick_Song)
 	for child in children {
 		if child.is_folder do append(&out, Stick_Song{name = strings.clone(child.name), folder_id = strings.clone(child.id)})
 	}
+	free = stick_free(tree, out[:])
 	slice.sort_by(out[:], proc(a, b: Stick_Song) -> bool {
 		return strings.compare(strings.to_lower(a.name, context.temp_allocator), strings.to_lower(b.name, context.temp_allocator)) < 0
 	})
-	return out[:], ""
+	return out[:], free, ""
+}
+
+// The free space, read through the first file found in a song folder (Android hands out files, not
+// the drive itself).
+@(private = "file")
+stick_free :: proc(tree: string, songs: []Stick_Song) -> i64 {
+	for song in songs {
+		children, problem := list_children(Folder_Ref{tree = tree, document_id = song.folder_id})
+		if problem != "" do continue
+		defer children_destroy(children)
+		for child in children {
+			if child.is_folder do continue
+			if bytes, ok := free_bytes(tree, child.id); ok do return bytes
+		}
+	}
+	return -1
+}
+
+// A song folder's name as the stick shows it, for matching a pack's song with it: lower case, and the
+// characters FAT can't hold as Android replaces them.
+stick_name_key :: proc(name: string, allocator := context.temp_allocator) -> string {
+	key := strings.to_lower(strings.trim_space(name), allocator)
+	bytes := transmute([]u8)key
+	for &c in bytes do if strings.contains_rune("\"*/:<>?\\|", rune(c)) do c = '_'
+	return key
+}
+
+// The stick's song folders' names, as stick_name_key makes them (heap).
+stick_names :: proc(tree: string) -> (names: []string, problem: string) {
+	songs, _, list_problem := stick_list_quick(tree)
+	if list_problem != "" do return nil, list_problem
+	defer stick_songs_destroy(songs)
+	out := make([]string, len(songs))
+	for song, i in songs do out[i] = stick_name_key(song.name, context.allocator)
+	return out, ""
+}
+
+// The song folders only (no free space: that costs a listing more).
+@(private = "file")
+stick_list_quick :: proc(tree: string) -> (songs: []Stick_Song, free: i64, problem: string) {
+	root, root_problem := root_folder(tree, context.temp_allocator)
+	if root_problem != "" do return nil, -1, root_problem
+	children, list_problem := list_children(root)
+	if list_problem != "" do return nil, -1, list_problem
+	defer children_destroy(children)
+	out := make([dynamic]Stick_Song)
+	for child in children do if child.is_folder do append(&out, Stick_Song{name = strings.clone(child.name), folder_id = strings.clone(child.id)})
+	return out[:], -1, ""
+}
+
+// Deletes a song folder from the stick with everything in it, and the app's backups of its charts.
+stick_delete :: proc(tree, folder_id: string) -> string {
+	if children, problem := list_children(Folder_Ref{tree = tree, document_id = folder_id}); problem == "" {
+		for child in children do if !child.is_folder do os.remove(backup_path(tree, child.id))
+		children_destroy(children)
+	}
+	return delete_document(tree, folder_id)
+}
+
+// The song folder named like `name` in the stick folder ("" if none), for replacing it.
+stick_find :: proc(tree, name: string, allocator := context.allocator) -> string {
+	songs, _, problem := stick_list_quick(tree)
+	if problem != "" do return ""
+	defer stick_songs_destroy(songs)
+	key := stick_name_key(name)
+	for song in songs do if stick_name_key(song.name) == key do return strings.clone(song.folder_id, allocator)
+	return ""
 }
 
 // A song's chart as found on the stick.
