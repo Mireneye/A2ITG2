@@ -162,7 +162,8 @@ draw_songs_page :: proc(l: Layout) {
 	folder_top := l.top
 	limit_top := folder_top + row
 	patch_top := limit_top + row
-	pack_top := patch_top + row
+	metronome_top := patch_top + row
+	pack_top := metronome_top + row
 	list_top := pack_top + l.list_row + scale
 
 	// The song list first, so the rows above cover any part scrolled under them.
@@ -194,7 +195,7 @@ draw_songs_page :: proc(l: Layout) {
 			if status.step == .Measuring do details = "CHECKING THE SYNC ..."
 			fill_rect(canvas, 0, top, int(f32(canvas.width) * fraction), l.list_row, COLOR_ACTIVE)
 		}
-		if i == state.preview_song {
+		if i == state.preview_song && state.preview_page == .Songs {
 			#partial switch state.preview {
 			case .Fetching: details = "GETTING THE AUDIO ..."
 			case .Playing:  details = fmt.tprintf("PLAYING FROM %s", minutes(state.preview_start))
@@ -202,22 +203,14 @@ draw_songs_page :: proc(l: Layout) {
 			}
 		}
 
-		// The play button: a square at the row's right end.
-		button_width := l.list_row
-		button_left := canvas.width - button_width
-		playing := i == state.preview_song && state.preview == .Playing
-		fill_rect(canvas, button_left + 2 * scale, top + 2 * scale, button_width - 4 * scale, l.list_row - 4 * scale, COLOR_ACTIVE if i == state.preview_song else COLOR_KEY)
-		symbol := "..." if i == state.preview_song && state.preview == .Fetching else string([]u8{GLYPH_PAUSE if playing else GLYPH_PLAY})
-		symbol_scale := scale * 2 if len(symbol) == 1 else scale
-		draw_text(canvas, symbol, button_left + (button_width - len(symbol) * CELL_WIDTH * symbol_scale) / 2, top + (l.list_row - GLYPH_HEIGHT * symbol_scale) / 2, symbol_scale, COLOR_TEXT)
-		button_columns := button_width / (CELL_WIDTH * scale)
+		button_left := draw_play_button(l, top, list_top, i, .Songs)
+		button_columns := (canvas.width - button_left) / (CELL_WIDTH * scale)
 
 		mark := sync_mark(song.sync) if i != state.copying else ""
 		mark_width := (len(mark) + 2) * CELL_WIDTH * scale if mark != "" else 0
 		name_columns := l.columns + MARGIN_CELLS - button_columns - 1
 		draw_two_lines(l, top, strings.to_upper(song.name, context.temp_allocator), details, COLOR_TEXT, COLOR_DIM, name_columns - (len(mark) + 2 if mark != "" else 0), name_columns)
 		row_bottom := min(top + l.list_row, l.bottom)
-		append(&state.hits, Hit{top = max(top, list_top), bottom = row_bottom, left = button_left, right = canvas.width, target = Preview_Tap{index = i}})
 		if mark != "" {
 			// The mark at the second line's right end, by the play button; tapping it opens or closes the foldout.
 			mark_left := button_left - mark_width - CELL_WIDTH * scale
@@ -253,6 +246,11 @@ draw_songs_page :: proc(l: Layout) {
 	fill_rect(canvas, 0, patch_top, canvas.width, row - scale, COLOR_HEADER)
 	draw_line(l, patch_top, row - scale, "LENGTH PATCH", COLOR_TEXT)
 	draw_small_button(l, canvas.width - 2 * button_width, patch_top, 2 * button_width, "ON" if state.length_patch == 1 else "OFF", state.length_patch == 1, Toggle_Length_Patch{})
+
+	// The metronome, with an ON/OFF button at the right.
+	fill_rect(canvas, 0, metronome_top, canvas.width, row - scale, COLOR_HEADER)
+	draw_line(l, metronome_top, row - scale, "METRONOME", COLOR_TEXT)
+	draw_small_button(l, canvas.width - 2 * button_width, metronome_top, 2 * button_width, "ON" if state.metronome == 1 else "OFF", state.metronome == 1, Toggle_Clicks{})
 
 	// The open pack: its name in full, and what tapping does.
 	fill_rect(canvas, 0, pack_top, canvas.width, l.list_row - scale, COLOR_HEADER)
@@ -292,7 +290,10 @@ draw_sync_page :: proc(l: Layout) {
 		case !song.opened:   details = "TAP TO OPEN"
 		case:                details = fmt.tprintf("%s  %s", format_offset(song.wanted), moved_text(&song))
 		}
-		draw_two_lines(l, top, strings.to_upper(song.song.name, context.temp_allocator), details, COLOR_TEXT, COLOR_DIM)
+		if i == state.preview_song && state.preview_page == .Sync && state.preview == .Fetching do details = "READING THE SONG ..."
+		button_left := draw_play_button(l, top, list_top, i, .Sync)
+		columns := l.columns + MARGIN_CELLS - (canvas.width - button_left) / (CELL_WIDTH * scale) - 1
+		draw_two_lines(l, top, strings.to_upper(song.song.name, context.temp_allocator), details, COLOR_TEXT, COLOR_DIM, columns, columns)
 		append(&state.hits, Hit{top = max(top, list_top), bottom = min(top + l.list_row, l.bottom), target = Stick_Song_Tap{index = i}})
 		if open && song.opened do draw_sync_panel(l, top + l.list_row + scale, list_top, &song)
 	}
@@ -305,6 +306,22 @@ draw_sync_page :: proc(l: Layout) {
 	fill_rect(canvas, 0, header_top, canvas.width, row - scale, COLOR_HEADER)
 	draw_line(l, header_top, row - scale, fmt.tprintf("%d SONGS  TAP TO RELOAD", len(state.stick_rows)), COLOR_TEXT)
 	append(&state.hits, Hit{top = header_top, bottom = header_top + row, target = Reload_Stick{}})
+}
+
+// A song row's play button, a square at its right end; returns its left edge.
+@(private = "file")
+draw_play_button :: proc(l: Layout, top, list_top, index: int, page: Page) -> (left: int) {
+	scale := l.scale
+	width := l.list_row
+	left = l.canvas.width - width
+	this := index == state.preview_song && page == state.preview_page
+	playing := this && state.preview == .Playing
+	fill_rect(l.canvas, left + 2 * scale, top + 2 * scale, width - 4 * scale, l.list_row - 4 * scale, COLOR_ACTIVE if this else COLOR_KEY)
+	symbol := "..." if this && state.preview == .Fetching else string([]u8{GLYPH_PAUSE if playing else GLYPH_PLAY})
+	symbol_scale := scale * 2 if len(symbol) == 1 else scale
+	draw_text(l.canvas, symbol, left + (width - len(symbol) * CELL_WIDTH * symbol_scale) / 2, top + (l.list_row - GLYPH_HEIGHT * symbol_scale) / 2, symbol_scale, COLOR_TEXT)
+	append(&state.hits, Hit{top = max(top, list_top), bottom = min(top + l.list_row, l.bottom), left = left, right = l.canvas.width, target = Preview_Tap{index = index, page = page}})
+	return left
 }
 
 // "AS ORIGINAL", or how far the notes have moved from the original chart.
@@ -342,10 +359,13 @@ draw_sync_panel :: proc(l: Layout, top, list_top: int, song: ^Stick_Row) {
 	panel_buttons(l, buttons_top, list_top, step_labels[:], state.sync_step, proc(i: int) -> Tap_Target { return Pick_Sync_Step{step = i} })
 	nudge_labels := [2]string{"NOTES EARLIER", "NOTES LATER"}
 	panel_buttons(l, buttons_top + row, list_top, nudge_labels[:], -1, proc(i: int) -> Tap_Target { return Nudge_Notes{earlier = i == 0} })
-	tool_labels := [2]string{"MEASURE", "RESET" if song.chart.has_backup else "NO CHANGES"}
-	panel_buttons(l, buttons_top + 2 * row, list_top, tool_labels[:], -1, proc(i: int) -> Tap_Target {
-		if i == 0 do return Measure_Stick{}
-		return Reset_Stick{}
+	tool_labels := [3]string{"MEASURE", "RESET" if song.chart.has_backup else "NO CHANGES", "CLICKS ON" if state.metronome == 1 else "CLICKS OFF"}
+	panel_buttons(l, buttons_top + 2 * row, list_top, tool_labels[:], 2 if state.metronome == 1 else -1, proc(i: int) -> Tap_Target {
+		switch i {
+		case 0: return Measure_Stick{}
+		case 1: return Reset_Stick{}
+		}
+		return Toggle_Clicks{}
 	})
 }
 

@@ -5,6 +5,7 @@ A StepMania .sm chart's timing: where each beat falls in the song, and when its 
 	defer timing_destroy(&timing)
 	seconds := beat_seconds(timing, 16)
 	notes := note_seconds(sm_text, timing)    // every note of every chart, once per moment (heap)
+	ticks := metronome_ticks(sm_text, timing) // every beat up to the last note's, for a metronome (heap)
 
 How StepMania reads it:
 	- beat 0 is at -#OFFSET seconds in the song (a negative offset: the music plays first);
@@ -91,6 +92,40 @@ note_seconds :: proc(sm: string, t: Timing, allocator := context.allocator) -> [
 		append(&seconds, beat_seconds(t, beat))
 	}
 	return seconds[:]
+}
+
+// A metronome's beat: when it falls with #OFFSET 0 (the time with an offset is `seconds - offset`, so
+// a player can follow a changing offset), and whether it starts a measure (every 4th beat).
+Tick :: struct {
+	seconds:  f64,
+	downbeat: bool,
+}
+
+// Every beat from 0 to the measure after the last note, in any chart.
+metronome_ticks :: proc(sm: string, t: Timing, allocator := context.allocator) -> []Tick {
+	last := 0.0
+	rest := sm
+	for {
+		at := index_of_tag(rest, "NOTES")
+		if at < 0 do break
+		rest = rest[at + len("#NOTES:"):]
+		end := strings.index_byte(rest, ';')
+		block := rest if end < 0 else rest[:end]
+		fields := strings.split_n(block, ":", 6, context.temp_allocator)
+		if len(fields) == 6 {
+			beats := make([dynamic]f64, context.temp_allocator)
+			add_note_beats(&beats, fields[5])
+			for beat in beats do last = max(last, beat)
+		}
+		if end < 0 do break
+		rest = rest[end:]
+	}
+	at_zero := t
+	at_zero.offset = 0
+	count := int(last) / 4 * 4 + 8 // through the next measure
+	ticks := make([]Tick, count + 1, allocator)
+	for &tick, beat in ticks do tick = {seconds = beat_seconds(at_zero, f64(beat)), downbeat = beat % 4 == 0}
+	return ticks
 }
 
 @(private = "file")

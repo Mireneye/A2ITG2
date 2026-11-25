@@ -136,3 +136,12 @@ app's own (as the cabinet plays it), reaching the preview point by decoding and 
 exact sample; a thread fills a 0.74 s ring that AAudio's callback plays from. The downloaded files stay in the
 app's `preview_cache/` (60 MB at most, oldest dropped first), and copying a song takes them from there: the
 preview is the download, the copy is the commit. The song pauses when the app leaves the screen.
+SYNC rows have the same button: the song is read straight from the stick into memory and played; nothing is
+copied anywhere.
+
+**Metronome.** While a song plays (SONGS or SYNC), the app can click on every beat of its chart: the beats'
+times come from `#BPMS` and `#STOPS` at `#OFFSET` 0 (`chart.metronome_ticks`, through the measure after the
+last note), and the player subtracts the offset as it mixes, so on SYNC the clicks move with each nudge as it
+is made, before the stick has it. Clicks are short tones (1.6 kHz, 2.4 kHz on each measure's first beat,
+fading in a few ms) placed by the song's own sample count in AAudio's callback; music and clicks share one
+stream, so the phone's output delay can't pull them apart. Clicks on the drums mean the chart is on the music.

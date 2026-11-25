@@ -84,6 +84,22 @@ synthetic_notes_early :: proc(t: ^testing.T) {
 }
 
 @(test)
+metronome_ticks_follow_the_timing :: proc(t: ^testing.T) {
+	sm := "#OFFSET:0.5;\n#BPMS:0=120,4=60;\n#STOPS:2=0.25;\n#NOTES:\n dance-single:\n x:\n Hard:\n 9:\n 0:\n0000\n1000\n,\n0001\n;\n"
+	timing, ok := read_timing(sm)
+	testing.expect(t, ok)
+	defer timing_destroy(&timing)
+	ticks := metronome_ticks(sm, timing)
+	defer delete(ticks)
+	testing.expect_value(t, len(ticks), 13) // last note on beat 4: through beat 12
+	near :: proc(a, b: f64) -> bool { return abs(a - b) < 1e-9 }
+	testing.expect(t, ticks[0].downbeat && !ticks[1].downbeat && ticks[4].downbeat)
+	testing.expect(t, near(ticks[2].seconds, 1.0))   // without the offset: 0.5 s per beat
+	testing.expect(t, near(ticks[3].seconds, 1.75))  // after the stop
+	testing.expect(t, near(ticks[5].seconds, 3.25))  // 60 BPM from beat 4
+}
+
+@(test)
 offsets_written_like_stepmania :: proc(t: ^testing.T) {
 	testing.expect_value(t, format_offset(0.161), "0.161")
 	testing.expect_value(t, format_offset(-4.888), "-4.888")

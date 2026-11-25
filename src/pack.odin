@@ -458,11 +458,41 @@ trim_preview_cache :: proc(folder: string) {
 	}
 }
 
-// What a preview plays: the song's audio and where its preview starts.
+// What a preview plays: the song's audio, where its preview starts, and the chart's beats for the
+// metronome.
 Preview :: struct {
 	sound:         []u8, // heap
 	format:        audio.Source_Format,
 	start_seconds: f64,
+	ticks:         []chart.Tick, // heap; at #OFFSET 0
+	offset:        f64,          // the chart's #OFFSET
+}
+
+preview_destroy :: proc(p: ^Preview) {
+	delete(p.sound)
+	delete(p.ticks)
+	p^ = {}
+}
+
+// The format, preview point and beats from the chart; `sound` (heap) becomes the preview's.
+preview_from_chart :: proc(chart_text, music_name: string, sound: []u8) -> (preview: Preview, problem: Pack_Problem) {
+	switch strings.to_lower(extension_of(music_name), context.temp_allocator) {
+	case ".ogg": preview.format = .Ogg
+	case ".mp3": preview.format = .Mp3
+	case:
+		delete(sound)
+		return {}, {"ONLY OGG AND MP3 AUDIO CAN BE PLAYED", ""}
+	}
+	if start, found := chart.tag_value(chart_text, "SAMPLESTART"); found {
+		preview.start_seconds, _ = strconv.parse_f64(strings.trim_space(start))
+	}
+	if timing, ok := chart.read_timing(chart_text); ok {
+		preview.ticks = chart.metronome_ticks(chart_text, timing)
+		preview.offset = timing.offset
+		chart.timing_destroy(&timing)
+	}
+	preview.sound = sound
+	return preview, {}
 }
 
 // The song's #MUSIC and #SAMPLESTART, from its .sm (or .ssc, which has the same tags).
@@ -484,16 +514,9 @@ preview_song :: proc(anchors: ^tls.Trust_Anchors, pack: ^Pack, index: int) -> (p
 	for reference in chart_references(chart_text) do if reference.tag == "MUSIC" do music_name = reference.name
 	music := find_in_song(pack, song, music_name) if music_name != "" else -1
 	if music < 0 do return {}, {"THE CHART'S AUDIO FILE IS MISSING", strings.to_upper(music_name, context.temp_allocator)}
-	switch strings.to_lower(extension_of(music_name), context.temp_allocator) {
-	case ".ogg": preview.format = .Ogg
-	case ".mp3": preview.format = .Mp3
-	case:        return {}, {"ONLY OGG AND MP3 AUDIO CAN BE PLAYED", ""}
-	}
-	if start, found := chart.tag_value(chart_text, "SAMPLESTART"); found {
-		preview.start_seconds, _ = strconv.parse_f64(strings.trim_space(start))
-	}
-	preview.sound, problem = fetch_entry_cached(anchors, pack, music, keep = true)
-	return preview, problem
+	sound, sound_problem := fetch_entry_cached(anchors, pack, music, keep = true)
+	if sound_problem.what != "" do return {}, sound_problem
+	return preview_from_chart(chart_text, music_name, sound)
 }
 
 // One file of the pack, fetched and unpacked.
@@ -549,7 +572,6 @@ last_part :: proc(path: string) -> string {
 	return path[strings.last_index_byte(path, '/') + 1:]
 }
 
-@(private = "file")
 extension_of :: proc(path: string) -> string {
 	name := last_part(path)
 	dot := strings.last_index_byte(name, '.')

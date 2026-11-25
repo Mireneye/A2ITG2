@@ -126,6 +126,31 @@ stick_reset :: proc(tree, sm_id: string) -> (original: f64, problem: string) {
 	return original, ""
 }
 
+// A stick song's chart and audio, to play.
+stick_preview :: proc(tree, folder_id: string) -> (preview: Preview, problem: string) {
+	children, list_problem := list_children(Folder_Ref{tree = tree, document_id = folder_id})
+	if list_problem != "" do return {}, list_problem
+	defer children_destroy(children)
+	sm_id := ""
+	for child in children {
+		if sm_id == "" && !child.is_folder && strings.has_suffix(strings.to_lower(child.name, context.temp_allocator), ".sm") do sm_id = child.id
+	}
+	if sm_id == "" do return {}, "NO .SM CHART IN THIS FOLDER"
+	text, read_problem := read_document(tree, sm_id)
+	if read_problem != "" do return {}, read_problem
+	defer delete(text)
+	music, _ := chart.tag_value(string(text), "MUSIC")
+	music = strings.trim_space(music)
+	for child in children {
+		if music == "" || strings.to_lower(child.name, context.temp_allocator) != strings.to_lower(music, context.temp_allocator) do continue
+		sound, sound_problem := read_document(tree, child.id)
+		if sound_problem != "" do return {}, sound_problem
+		built, build_problem := preview_from_chart(string(text), music, sound)
+		return built, build_problem.what
+	}
+	return {}, "THE CHART'S AUDIO FILE IS NOT IN THE FOLDER"
+}
+
 stick_measure :: proc(tree, sm_id, music_id: string) -> (sync: Song_Sync, problem: string) {
 	text, read_problem := read_document(tree, sm_id)
 	if read_problem != "" do return {}, read_problem

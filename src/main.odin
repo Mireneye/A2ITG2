@@ -16,6 +16,7 @@ The screen, top to bottom (screen.odin draws it):
 	STICK row   the folder songs are copied into; tap to pick another
 	AUDIO row   the most an Ogg may take (MP3s are converted to fit); tap - or + to change it
 	PATCH row   whether Oggs over 1:45 are length patched to read as 1:45; tap to switch
+	METRONOME row  clicks on the chart's beats while a song plays (also on SYNC); tap to switch
 	PACK row    the open pack; tap to read it again
 	the pack's songs; tap one to copy it into the stick folder (videos are left out). The button at a
 	song's right plays it from its preview point (#SAMPLESTART), and pauses it; its audio is kept in
@@ -26,11 +27,13 @@ The screen, top to bottom (screen.odin draws it):
 
 	SYNC page: change the sync of songs already on the stick (stick.odin)
 	STICK row   how many song folders the stick folder has; tap to read it again
-	the stick's songs; tap one to open it:
+	the stick's songs; the button at the right plays one from the stick (with the metronome, if on,
+	following the nudges as they're made); tap a song to open it:
 	            its #OFFSET now and the original, and how far the notes moved
 	            STEP     0.1 / 1 / 10 / 100 ms
 	            NOTES EARLIER / NOTES LATER   move the notes by a step (written to the stick at once)
-	            MEASURE  how its notes sit on its music; RESET  the original chart back
+	            MEASURE  how its notes sit on its music; RESET  the original chart back;
+	            CLICKS   the metronome on or off
 	            Before a chart is first changed, the original is kept in the app (stick.odin).
 
 The screen keeps clear of the phone's status and navigation bars (insets.odin).
@@ -102,6 +105,7 @@ Tap_Target :: union {
 	Song_Tap,
 	Sync_Fold,
 	Preview_Tap,
+	Toggle_Clicks,
 	Reload_Stick,
 	Stick_Song_Tap,
 	Pick_Sync_Step,
@@ -120,7 +124,8 @@ Toggle_Length_Patch :: struct {}
 Reload_Pack      :: struct {}
 Song_Tap         :: struct { index: int }
 Sync_Fold        :: struct { index: int }
-Preview_Tap      :: struct { index: int }
+Preview_Tap      :: struct { index: int, page: Page }
+Toggle_Clicks    :: struct {}
 
 Preview_State :: enum u8 {
 	Idle,
@@ -182,6 +187,8 @@ App_State :: struct {
 	fold_open:     int, // the song row whose sync foldout is open, or -1
 	preview:       Preview_State,
 	preview_song:  int, // the song row playing, paused or being fetched, or -1
+	preview_page:  Page, // which list that row is in (.Songs or .Sync)
+	metronome:     int,  // 1 on, 0 off (a saved setting)
 	preview_start: f64, // where it started, seconds
 	progress:      Copy_Progress,
 
@@ -306,15 +313,19 @@ handle_worker_messages :: proc() {
 		switch m in message {
 		case Preview_Ready:
 			preview := m.preview
-			if m.pack_id != state.pack_id || m.index != state.preview_song || state.preview != .Fetching {
-				delete(preview.sound) // asked for something else since
+			list_id := state.pack_id if m.page == .Songs else state.stick_stamp
+			if m.page != state.preview_page || m.pack_id != list_id || m.index != state.preview_song || state.preview != .Fetching {
+				preview_destroy(&preview) // asked for something else since
 				continue
 			}
 			if preview.sound == nil {
+				preview_destroy(&preview)
 				stop_preview()
 				continue
 			}
-			if problem := player_play(preview.sound, preview.format, preview.start_seconds); problem != "" {
+			// On SYNC the metronome follows the offset as shown, which may be ahead of the stick.
+			if row := stick_row(m.index, m.pack_id); m.page == .Sync && row != nil && row.opened do preview.offset = row.wanted
+			if problem := player_play(preview, state.metronome == 1); problem != "" {
 				say(.Bad, "COULD NOT PLAY THE SONG:", problem)
 				stop_preview()
 				continue
@@ -325,7 +336,7 @@ handle_worker_messages :: proc() {
 			delete(m.lines[0])
 			delete(m.lines[1])
 		case Pack_Ready:
-			stop_preview()
+			if state.preview_page == .Songs do stop_preview()
 			free_song_rows()
 			state.pack_id, state.pack_name, state.songs = m.id, m.name, m.rows
 			state.fold_open = -1
@@ -348,6 +359,7 @@ handle_worker_messages :: proc() {
 				continue
 			}
 			state.stick_listing = false
+			if state.preview_page == .Sync do stop_preview()
 			free_stick_rows()
 			state.stick_rows = make([]Stick_Row, len(m.songs))
 			for song, i in m.songs do state.stick_rows[i].song = song
@@ -363,6 +375,7 @@ handle_worker_messages :: proc() {
 			row.opening = false
 			if chart.sm_id == "" do continue
 			row.chart, row.opened, row.wanted = chart, true, chart.offset
+			if state.preview_page == .Sync && state.preview_song == m.index do player_set_offset(row.wanted)
 		case Stick_Offset_Written:
 			row := stick_row(m.index, m.stamp)
 			if row == nil do continue
@@ -371,12 +384,14 @@ handle_worker_messages :: proc() {
 				row.chart.has_backup = true
 			} else {
 				row.wanted = row.chart.offset // show what the stick really has
+				if state.preview_page == .Sync && state.preview_song == m.index do player_set_offset(row.wanted)
 			}
 		case Stick_Reset_Done:
 			row := stick_row(m.index, m.stamp)
 			if row == nil || !m.ok do continue
 			row.chart.offset, row.chart.original, row.wanted = m.original, m.original, m.original
 			row.chart.has_backup = false
+			if state.preview_page == .Sync && state.preview_song == m.index do player_set_offset(row.wanted)
 		case Stick_Measured:
 			row := stick_row(m.index, m.stamp)
 			if row == nil do continue
@@ -413,6 +428,7 @@ on_tap :: proc(app: ^glue.android_app, x, y: int) {
 			// A note's time is its beat's time minus #OFFSET: a bigger #OFFSET brings the notes earlier.
 			step := SYNC_STEPS[state.sync_step]
 			row.wanted = math.round((row.wanted + (step if target.earlier else -step)) * 10_000) / 10_000
+			if state.preview_page == .Sync && state.preview_song == state.sync_open do player_set_offset(row.wanted)
 			worker_ask(Set_Stick_Offset{index = state.sync_open, stamp = state.stick_stamp, tree = strings.clone(state.folder), sm_id = strings.clone(row.chart.sm_id), offset = row.wanted})
 		case Measure_Stick:
 			row := open_stick_row()
@@ -470,8 +486,12 @@ on_tap :: proc(app: ^glue.android_app, x, y: int) {
 		case Reload_Pack:
 			if state.copying >= 0 do return
 			worker_ask(Open_Pack{id = state.pack_id})
+		case Toggle_Clicks:
+			state.metronome = 1 - state.metronome
+			player_set_clicks(state.metronome == 1)
+			save_settings()
 		case Preview_Tap:
-			if target.index == state.preview_song {
+			if target.index == state.preview_song && target.page == state.preview_page {
 				#partial switch state.preview {
 				case .Playing:
 					player_pause()
@@ -482,9 +502,14 @@ on_tap :: proc(app: ^glue.android_app, x, y: int) {
 				}
 			} else {
 				stop_preview()
-				state.preview, state.preview_song = .Fetching, target.index
+				state.preview, state.preview_song, state.preview_page = .Fetching, target.index, target.page
 				if state.copying >= 0 do say(.Waiting, "THE SONG PLAYS ONCE THE COPY IS DONE.")
-				worker_ask(Preview_Song{index = target.index, pack_id = state.pack_id})
+				if target.page == .Sync {
+					song := state.stick_rows[target.index].song
+					worker_ask(Preview_Stick{index = target.index, stamp = state.stick_stamp, tree = strings.clone(state.folder), folder_id = strings.clone(song.folder_id)})
+				} else {
+					worker_ask(Preview_Song{index = target.index, pack_id = state.pack_id})
+				}
 			}
 		case Sync_Fold:
 			state.fold_open = -1 if state.fold_open == target.index else target.index
@@ -580,8 +605,9 @@ Setting :: struct {
 	min, max: int,
 }
 
-settings_table :: proc() -> [4]Setting {
+settings_table :: proc() -> [5]Setting {
 	return {
+		{key = "metronome",         value = &state.metronome,    default = 0,                   min = 0,               max = 1},
 		{key = "sync_step",         value = &state.sync_step,    default = 1,                   min = 0,               max = len(SYNC_STEPS) - 1},
 		{key = "audio_limit_bytes", value = &state.audio_limit,  default = DEFAULT_AUDIO_LIMIT, min = AUDIO_LIMIT_MIN, max = AUDIO_LIMIT_MAX},
 		{key = "length_patch",      value = &state.length_patch, default = 1,                   min = 0,               max = 1},

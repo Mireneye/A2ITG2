@@ -81,8 +81,17 @@ Preview_Song :: struct {
 	pack_id: int, // the pack the screen had: dropped if another is open by now
 }
 
+// A stick song's chart and audio, for playing on the SYNC page (read from the stick, kept nowhere).
+Preview_Stick :: struct {
+	index:     int,
+	stamp:     int,
+	tree:      string, // heap
+	folder_id: string, // heap
+}
+
 Job :: union {
 	Preview_Song,
+	Preview_Stick,
 	Open_Pack,
 	Copy_Song,
 	Load_Catalog,
@@ -158,6 +167,7 @@ Stick_Measured :: struct {
 }
 
 Preview_Ready :: struct {
+	page:    Page, // .Songs: `index` of pack `pack_id`; .Sync: `index` of stick list `pack_id`
 	index:   int,
 	pack_id: int,
 	preview: Preview, // empty sound when it failed
@@ -241,7 +251,13 @@ worker_main :: proc() {
 				preview, problem = preview_song(&anchors, &pack, j.index)
 				if problem.what != "" do say_from_worker(.Bad, problem.what, problem.why)
 			}
-			tell(Preview_Ready{index = j.index, pack_id = j.pack_id, preview = preview})
+			tell(Preview_Ready{page = .Songs, index = j.index, pack_id = j.pack_id, preview = preview})
+		case Preview_Stick:
+			defer delete(j.tree)
+			defer delete(j.folder_id)
+			preview, problem := stick_preview(j.tree, j.folder_id)
+			if problem != "" do say_from_worker(.Bad, "COULD NOT READ THE SONG FROM THE STICK", problem)
+			tell(Preview_Ready{page = .Sync, index = j.index, pack_id = j.stamp, preview = preview})
 		case Open_Pack:    do_open_pack(j)
 		case Copy_Song:    do_copy_song(j)
 		case Load_Catalog: do_load_catalog(j)
