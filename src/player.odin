@@ -5,6 +5,7 @@ Playing a song's audio on the phone, for previews on the SONGS page.
 	player_pause() / player_resume()
 	player_set_clicks(on)                       the metronome on or off, any time
 	player_set_offset(seconds)                  the #OFFSET the metronome follows, any time
+	player_set_click_volume(volume)             how loud the clicks are (1 = the metronome's default)
 	player_stop()
 	player_finished()                           true once a song has played to its end
 
@@ -45,6 +46,7 @@ Player :: struct {
 	start_frame: i64, // the song's sample frame the ring starts at
 	offset_bits: u64, // the #OFFSET the clicks follow, as the f64's bits (set from the app's loop)
 	clicks:   bool,
+	volume_bits: u32, // the clicks' volume, as the f32's bits
 	metronome: metronome.Metronome,
 	channels: int,
 	rate:     int,
@@ -59,7 +61,7 @@ Player :: struct {
 @(private = "file") player: Player
 
 // Starts the preview (its memory becomes the player's) from its preview point. "" or a problem to show.
-player_play :: proc(preview: Preview, clicks: bool) -> string {
+player_play :: proc(preview: Preview, clicks: bool, click_volume: f32) -> string {
 	player_stop()
 	bytes, format, from_seconds := preview.sound, preview.format, preview.start_seconds
 	ticks := preview.ticks
@@ -100,6 +102,7 @@ player_play :: proc(preview: Preview, clicks: bool) -> string {
 	player.start_frame = i64(max(from_seconds, 0) * f64(rate))
 	player.offset_bits = transmute(u64)preview.offset
 	player.metronome = metronome.metronome_make(ticks, rate)
+	player.volume_bits = transmute(u32)click_volume
 	handed_over = true
 	player.ring = make([]f32, PLAYER_RING_FRAMES * channels)
 	player.worker = thread.create_and_start(decode_thread)
@@ -117,6 +120,10 @@ player_pause :: proc() {
 
 player_set_clicks :: proc(on: bool) {
 	intrinsics.atomic_store_explicit(&player.clicks, on, .Relaxed)
+}
+
+player_set_click_volume :: proc(volume: f32) {
+	intrinsics.atomic_store_explicit(&player.volume_bits, transmute(u32)volume, .Relaxed)
 }
 
 player_set_offset :: proc(offset: f64) {
@@ -198,7 +205,8 @@ fill_callback :: proc "c" (stream: ^aaudio.AAudioStream, user_data: rawptr, audi
 	for i in count * channels..<len(out) do out[i] = 0
 	if count > 0 && intrinsics.atomic_load_explicit(&player.clicks, .Relaxed) {
 		offset := transmute(f64)intrinsics.atomic_load_explicit(&player.offset_bits, .Relaxed)
-		metronome.mix(&player.metronome, out[:count * channels], channels, player.start_frame + i64(read), offset)
+		volume := transmute(f32)intrinsics.atomic_load_explicit(&player.volume_bits, .Relaxed)
+		metronome.mix(&player.metronome, out[:count * channels], channels, player.start_frame + i64(read), offset, volume)
 	}
 	intrinsics.atomic_store_explicit(&player.read, read + u64(count), .Seq_Cst)
 	if count == 0 && intrinsics.atomic_load_explicit(&player.decoded, .Seq_Cst) && !intrinsics.atomic_load_explicit(&player.finished, .Relaxed) {

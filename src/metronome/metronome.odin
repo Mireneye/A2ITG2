@@ -3,7 +3,8 @@ A metronome mixed into a song as it plays: a click on every beat of the chart, a
 measure's first beat. Allocation-free and lock-free once made, so it can run in an audio callback.
 
 	m := metronome_make(ticks, sample_rate)      // ticks from chart.metronome_ticks (at #OFFSET 0)
-	mix(&m, out, channels, first_frame, offset)  // out: interleaved; first_frame: the song's frame at out[0]
+	mix(&m, out, channels, first_frame, offset, volume)  // out: interleaved; first_frame: the song's frame
+	                                                      // at out[0]; volume 1 = CLICK_LOUDNESS
 
 A tick's click starts on frame round((tick.seconds - offset) * rate) exactly. While clicks sound the
 music is lowered by DUCK_GAIN, so the clicks cut through a loud mix; the dip follows the click's own
@@ -46,7 +47,7 @@ click_frame :: proc "contextless" (m: ^Metronome, tick: chart.Tick, offset: f64)
 }
 
 // Adds the clicks that sound in `out` (len(out)/channels frames from the song's `first_frame`).
-mix :: proc "contextless" (m: ^Metronome, out: []f32, channels: int, first_frame: i64, offset: f64) {
+mix :: proc "contextless" (m: ^Metronome, out: []f32, channels: int, first_frame: i64, offset: f64, volume: f32 = 1) {
 	if len(m.ticks) == 0 || channels <= 0 do return
 	last := first_frame + i64(len(out) / channels)
 	// The first tick whose click still sounds at first_frame.
@@ -67,7 +68,8 @@ mix :: proc "contextless" (m: ^Metronome, out: []f32, channels: int, first_frame
 			k := frame - start
 			duck := 1 - (1 - DUCK_GAIN) * m.envelope[k]
 			at := int(frame - first_frame) * channels
-			for c in 0..<channels do out[at + c] = clamp(out[at + c] * duck + tone[k], -1, 1)
+			click := tone[k] * volume
+			for c in 0..<channels do out[at + c] = clamp(out[at + c] * duck + click, -1, 1)
 		}
 	}
 }

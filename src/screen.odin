@@ -247,10 +247,12 @@ draw_songs_page :: proc(l: Layout) {
 	draw_line(l, patch_top, row - scale, "LENGTH PATCH", COLOR_TEXT)
 	draw_small_button(l, canvas.width - 2 * button_width, patch_top, 2 * button_width, "ON" if state.length_patch == 1 else "OFF", state.length_patch == 1, Toggle_Length_Patch{})
 
-	// The metronome, with an ON/OFF button at the right.
+	// The metronome: its volume with - and +, and ON/OFF.
 	fill_rect(canvas, 0, metronome_top, canvas.width, row - scale, COLOR_HEADER)
-	draw_line(l, metronome_top, row - scale, "METRONOME", COLOR_TEXT)
-	draw_small_button(l, canvas.width - 2 * button_width, metronome_top, 2 * button_width, "ON" if state.metronome == 1 else "OFF", state.metronome == 1, Toggle_Clicks{})
+	draw_line(l, metronome_top, row - scale, fmt.tprintf("CLICKS %d%%", state.click_volume), COLOR_TEXT)
+	draw_small_button(l, canvas.width - 3 * button_width, metronome_top, button_width, "-", true, Click_Volume{up = false})
+	draw_small_button(l, canvas.width - 2 * button_width, metronome_top, button_width, "+", true, Click_Volume{up = true})
+	draw_small_button(l, canvas.width - button_width, metronome_top, button_width, "ON" if state.metronome == 1 else "OFF", state.metronome == 1, Toggle_Clicks{})
 
 	// The open pack: its name in full, and what tapping does.
 	fill_rect(canvas, 0, pack_top, canvas.width, l.list_row - scale, COLOR_HEADER)

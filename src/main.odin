@@ -16,7 +16,8 @@ The screen, top to bottom (screen.odin draws it):
 	STICK row   the folder songs are copied into; tap to pick another
 	AUDIO row   the most an Ogg may take (MP3s are converted to fit); tap - or + to change it
 	PATCH row   whether Oggs over 1:45 are length patched to read as 1:45; tap to switch
-	METRONOME row  clicks on the chart's beats while a song plays (also on SYNC); tap to switch
+	CLICKS row  the metronome: clicks on the chart's beats while a song plays (also on SYNC), how loud
+	            they are (- and +, heard at once), and ON/OFF
 	PACK row    the open pack; tap to read it again
 	the pack's songs; tap one to copy it into the stick folder (videos are left out). The button at a
 	song's right plays it from its preview point (#SAMPLESTART), and pauses it; its audio is kept in
@@ -71,6 +72,11 @@ STATUS_ROWS :: 4 // the status area keeps its size; older lines scroll off
 
 // Sync marks: within SYNC_MILD_MS no mark (all four cab-perfect test songs are); up to SYNC_STRONG_MS
 // a quiet mark (often the ~9 ms some charters add); past it a loud one.
+// The metronome's loudness, in percent of its default (src/metronome: CLICK_LOUDNESS).
+CLICK_VOLUME_STEP :: 10
+CLICK_VOLUME_MIN  :: 10
+CLICK_VOLUME_MAX  :: 200
+
 SYNC_MILD_MS   :: 6.0
 SYNC_STRONG_MS :: 15.0
 
@@ -106,6 +112,7 @@ Tap_Target :: union {
 	Sync_Fold,
 	Preview_Tap,
 	Toggle_Clicks,
+	Click_Volume,
 	Reload_Stick,
 	Stick_Song_Tap,
 	Pick_Sync_Step,
@@ -126,6 +133,7 @@ Song_Tap         :: struct { index: int }
 Sync_Fold        :: struct { index: int }
 Preview_Tap      :: struct { index: int, page: Page }
 Toggle_Clicks    :: struct {}
+Click_Volume     :: struct { up: bool }
 
 Preview_State :: enum u8 {
 	Idle,
@@ -189,6 +197,7 @@ App_State :: struct {
 	preview_song:  int, // the song row playing, paused or being fetched, or -1
 	preview_page:  Page, // which list that row is in (.Songs or .Sync)
 	metronome:     int,  // 1 on, 0 off (a saved setting)
+	click_volume:  int,  // percent of the metronome's default loudness (a saved setting)
 	preview_start: f64, // where it started, seconds
 	progress:      Copy_Progress,
 
@@ -325,7 +334,7 @@ handle_worker_messages :: proc() {
 			}
 			// On SYNC the metronome follows the offset as shown, which may be ahead of the stick.
 			if row := stick_row(m.index, m.pack_id); m.page == .Sync && row != nil && row.opened do preview.offset = row.wanted
-			if problem := player_play(preview, state.metronome == 1); problem != "" {
+			if problem := player_play(preview, state.metronome == 1, f32(state.click_volume) / 100); problem != "" {
 				say(.Bad, "COULD NOT PLAY THE SONG:", problem)
 				stop_preview()
 				continue
@@ -486,6 +495,10 @@ on_tap :: proc(app: ^glue.android_app, x, y: int) {
 		case Reload_Pack:
 			if state.copying >= 0 do return
 			worker_ask(Open_Pack{id = state.pack_id})
+		case Click_Volume:
+			state.click_volume = clamp(state.click_volume + (CLICK_VOLUME_STEP if target.up else -CLICK_VOLUME_STEP), CLICK_VOLUME_MIN, CLICK_VOLUME_MAX)
+			player_set_click_volume(f32(state.click_volume) / 100)
+			save_settings()
 		case Toggle_Clicks:
 			state.metronome = 1 - state.metronome
 			player_set_clicks(state.metronome == 1)
@@ -605,8 +618,9 @@ Setting :: struct {
 	min, max: int,
 }
 
-settings_table :: proc() -> [5]Setting {
+settings_table :: proc() -> [6]Setting {
 	return {
+		{key = "click_volume",      value = &state.click_volume, default = 100,                 min = CLICK_VOLUME_MIN, max = CLICK_VOLUME_MAX},
 		{key = "metronome",         value = &state.metronome,    default = 0,                   min = 0,               max = 1},
 		{key = "sync_step",         value = &state.sync_step,    default = 1,                   min = 0,               max = len(SYNC_STEPS) - 1},
 		{key = "audio_limit_bytes", value = &state.audio_limit,  default = DEFAULT_AUDIO_LIMIT, min = AUDIO_LIMIT_MIN, max = AUDIO_LIMIT_MAX},
