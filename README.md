@@ -51,10 +51,10 @@ Then:
 1. Plug the stick into the phone. Tap **STICK** and pick the folder songs should go in: on a stick the cabinet has
    used, its "In The Groove 2" folder's Songs folder. The app remembers it.
 2. **AUDIO LIMIT** is the most a song's Ogg may take; tap - or + (0.1 MB steps). MP3s are converted to the best
-   quality that fits.
+   quality that fits; an Ogg over the limit is re-encoded smaller (Oggs that fit are copied untouched).
 3. **LENGTH PATCH** (on by default): songs over 1:45 get the Ogg length patch, so an r21 cabinet reads them as 1:45
    and plays all of them. Tap to switch it off. (r23 cabinets cut custom songs at 2:00 regardless.)
-4. Tap a song. Its row fills as it copies: by files, then by percent while an MP3 becomes an Ogg (`CONVERTING 37%`;
+4. Tap a song. Its row fills as it copies: by files, then by percent while an MP3 becomes an Ogg (`CONVERTING 37%`) or a big Ogg is made smaller (`SHRINKING 37%`;
    `SMALLER .. (TRY 2)` if the first try came out over the limit). The top strip turns green with `SAFE TO UNPLUG`.
 
 Blue strip: working. Green: done. Red: a step failed, and the text says which and why.

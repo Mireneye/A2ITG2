@@ -36,4 +36,8 @@ struct_layouts_match_c :: proc(t: ^testing.T) {
 	testing.expect_value(t, size_of(Vorbis_Comment), 32)
 	testing.expect_value(t, size_of(Vorbis_Dsp_State), 144)
 	testing.expect_value(t, size_of(Vorbis_Block), 192)
+	testing.expect_value(t, size_of(OggVorbis_File), 944)
+	testing.expect_value(t, size_of(Ov_Callbacks), 32)
+	testing.expect_value(t, offset_of(Vorbis_Info_Fields, channels), 4)
+	testing.expect_value(t, offset_of(Vorbis_Info_Fields, rate), 8)
 }

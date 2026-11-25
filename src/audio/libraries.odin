@@ -1,6 +1,7 @@
 /*
 Bindings for the C audio libraries (built by tools/build_audio_libs.sh into libs/<target>/libaudio.a):
-libmad 0.15.1b for MP3 decoding, libogg and libvorbis for Ogg Vorbis encoding.
+libmad 0.15.1b for MP3 decoding, libogg and libvorbis for Ogg Vorbis encoding, and libvorbis' vorbisfile
+for Ogg Vorbis decoding (as StepMania reads Oggs).
 
 Only what the converter calls. Structs the converter reads into are written out field by field;
 structs it only hands back to the libraries are opaque blocks of the right size. layout_test.odin
@@ -194,4 +195,34 @@ foreign libaudio {
 	vorbis_analysis             :: proc(block: ^Vorbis_Block, packet: ^Ogg_Packet) -> c.int ---
 	vorbis_bitrate_addblock     :: proc(block: ^Vorbis_Block) -> c.int ---
 	vorbis_bitrate_flushpacket  :: proc(dsp: ^Vorbis_Dsp_State, packet: ^Ogg_Packet) -> c.int ---
+}
+
+// ---- vorbisfile (decoding) ----
+
+OggVorbis_File :: struct #align(8) { _: [944]u8 } // opaque
+
+// The start of vorbis_info: what the decoder reads from ov_info.
+Vorbis_Info_Fields :: struct {
+	version:  c.int,
+	channels: c.int,
+	rate:     c.long,
+}
+
+Ov_Callbacks :: struct {
+	read_func:  proc "c" (destination: rawptr, size, count: c.size_t, source: rawptr) -> c.size_t,
+	seek_func:  proc "c" (source: rawptr, offset: i64, whence: c.int) -> c.int,
+	close_func: proc "c" (source: rawptr) -> c.int,
+	tell_func:  proc "c" (source: rawptr) -> c.long,
+}
+
+OV_HOLE      :: -3
+OV_EBADLINK  :: -137
+
+@(default_calling_convention = "c")
+foreign libaudio {
+	ov_open_callbacks :: proc(source: rawptr, file: ^OggVorbis_File, initial: [^]u8, initial_bytes: c.long, callbacks: Ov_Callbacks) -> c.int ---
+	ov_clear          :: proc(file: ^OggVorbis_File) -> c.int ---
+	ov_info           :: proc(file: ^OggVorbis_File, link: c.int) -> ^Vorbis_Info_Fields ---
+	ov_pcm_tell       :: proc(file: ^OggVorbis_File) -> i64 ---
+	ov_read_float     :: proc(file: ^OggVorbis_File, pcm: ^[^][^]f32, samples: c.int, bitstream: ^c.int) -> c.long ---
 }

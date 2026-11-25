@@ -70,6 +70,13 @@ the overshoot and it is encoded again. Tests on click tracks (CBR with an Info f
 frame) check the clicks land 1105 or 2257 samples late as StepMania plays them, and on the same sample in the Ogg,
 with the same sample count. Below about 45 kbps libvorbis can't go: at the 4.8 MB default that is a 14-minute song.
 
+**Shrinking Oggs, as built.** An Ogg over the audio limit is decoded with libvorbisfile (StepMania's own Ogg
+decoder, from the same Vorbis source) through a port of StepMania's read loop (gaps filled with silence so later
+audio stays in sync), then encoded again like a converted MP3. Only Oggs over the limit are touched, since
+re-encoding lossy audio costs a little quality. Tests: clicks on the same samples and the same length after
+shrinking (also read back by stb_vorbis), size limits met, and a length-patched Ogg keeps its whole song (the
+sample count comes from decoding, not from the length the file states).
+
 **The length patch, as built.** ITG2 reads a song's length from the Ogg's last page: its granule position, a
 sample count. The patch (as github.com/LHCGreg/itgoggpatch does it) sets that to 105 s worth of samples and
 recomputes the page's checksum; nothing else in the file changes (12 bytes at most, same file size), and the

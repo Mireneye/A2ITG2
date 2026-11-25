@@ -143,7 +143,8 @@ find_songs :: proc(pack: ^Pack) {
 // an .sm (ITG2 reads no other format) copies nothing.
 //
 // MP3 audio is converted to Ogg Vorbis within the audio limit (src/audio: sample-exact, so the chart's
-// sync holds) and the chart's #MUSIC is rewritten to the new name. With the length patch on, an Ogg
+// sync holds) and the chart's #MUSIC is rewritten to the new name. An Ogg over the limit is re-encoded
+// smaller under its own name; Oggs that fit are copied untouched. With the length patch on, an Ogg
 // longer than 1:45 (converted or copied) is patched to read as 1:45. The chart is written last: a song
 // folder is complete once its chart is there.
 copy_song :: proc(anchors: ^tls.Trust_Anchors, pack: ^Pack, index: int, destination: Folder_Ref, options: Copy_Options, progress: Copy_Progress_Proc) -> (notes: Copy_Notes, problem: Pack_Problem) {
@@ -219,10 +220,25 @@ copy_song :: proc(anchors: ^tls.Trust_Anchors, pack: ^Pack, index: int, destinat
 			notes.files += 1
 			continue
 		}
-		if entry_index == music && len(data) > audio_limit do notes.audio_over_limit = true
-		if entry_index == music && options.length_patch && strings.to_lower(extension_of(file_name), context.temp_allocator) == ".ogg" {
-			apply_length_patch(data, &notes)
+		is_ogg := strings.to_lower(extension_of(file_name), context.temp_allocator) == ".ogg"
+		if entry_index == music && is_ogg && len(data) > audio_limit {
+			// Too big for the cabinet: re-encode it smaller under the same name (the chart stays as is).
+			progress({step = .Shrinking, done = done, total = total, pass = 1})
+			shrink_status := Copy_Status{step = .Shrinking, done = done, total = total}
+			shrink_progress := Conversion_Progress{progress = progress, status = &shrink_status}
+			shrunk, shrink_problem := audio.ogg_shrink(data, audio_limit, proc(data: rawptr, percent, pass: int) {
+				p := (^Conversion_Progress)(data)
+				p.status.percent, p.status.pass = percent, pass
+				p.progress(p.status^)
+			}, &shrink_progress)
+			if shrink_problem != .None do return notes, convert_problem_text(shrink_problem, audio_limit)
+			delete(data)
+			data = shrunk.ogg
+			notes.shrunk = true
+			notes.original_bytes = int(entry.uncompressed_size)
+			notes.ogg_bytes, notes.ogg_bitrate = len(shrunk.ogg), shrunk.bitrate
 		}
+		if entry_index == music && is_ogg && options.length_patch do apply_length_patch(data, &notes)
 
 		if write_problem := write_file(folder, file_name, data); write_problem != "" {
 			return notes, {fmt.tprintf("COULD NOT WRITE %s", strings.to_upper(file_name, context.temp_allocator)), write_problem}
@@ -255,7 +271,8 @@ apply_length_patch :: proc(ogg: []u8, notes: ^Copy_Notes) {
 
 Copy_Step :: enum u8 {
 	Fetching,
-	Converting,
+	Converting, // an MP3 becoming an Ogg
+	Shrinking,  // an Ogg over the audio limit being re-encoded smaller
 }
 
 // Where a copy is: `done` of `total` files, and while converting, `percent` of encoding `pass`
@@ -283,7 +300,8 @@ Copy_Notes :: struct {
 	converted:        bool, // the MP3 became an Ogg
 	ogg_bytes:        int,
 	ogg_bitrate:      int,
-	audio_over_limit: bool, // an Ogg already, but bigger than the limit (re-encoding Oggs comes later)
+	shrunk:           bool, // an Ogg over the limit, re-encoded smaller
+	original_bytes:   int,  // its size before
 	length_patched:   bool, // the Ogg now reads as 1:45
 	patch_failed:     bool, // the Ogg couldn't be read for patching (copied unpatched)
 	real_seconds:     f64,

@@ -230,8 +230,8 @@ do_copy_song :: proc(job: Copy_Song) {
 	switch {
 	case notes.converted:
 		say_from_worker(.Good, done_line, fmt.tprintf("MP3 CONVERTED TO OGG: %s AT %d KBPS.", megabytes(i64(notes.ogg_bytes)), notes.ogg_bitrate / 1000))
-	case notes.audio_over_limit:
-		say_from_worker(.Good, done_line, "ITS OGG IS OVER THE AUDIO LIMIT (SHRINKING OGGS COMES LATER).")
+	case notes.shrunk:
+		say_from_worker(.Good, done_line, fmt.tprintf("ITS OGG WAS OVER THE LIMIT: SHRUNK FROM %s TO %s AT %d KBPS.", megabytes(i64(notes.original_bytes)), megabytes(i64(notes.ogg_bytes)), notes.ogg_bitrate / 1000))
 	case notes.missing > 0:
 		say_from_worker(.Good, done_line, fmt.tprintf("%d PICTURE(S) THE CHART NAMES WERE NOT IN THE PACK.", notes.missing))
 	case:

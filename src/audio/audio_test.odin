@@ -248,3 +248,72 @@ length_patch_leaves_the_audio_and_sync_alone :: proc(t: ^testing.T) {
 	// block (576 samples here), since it takes the last page's granule as "trim this page".
 	fmt.printfln("length patch: %d samples decoded before patching, %d after (patched to %d)", len(before) / channels, len(after) / channels, 2 * result.sample_rate)
 }
+
+decode_with_our_ogg_decoder :: proc(t: ^testing.T, ogg: []u8) -> (samples: [dynamic]f32, channels: int) {
+	d: Ogg_Decoder
+	defer ogg_close(&d)
+	testing.expect(t, ogg_open(&d, ogg))
+	samples = make([dynamic]f32, context.temp_allocator)
+	for block in ogg_next(&d) do append(&samples, ..block)
+	testing.expect(t, d.error == nil)
+	return samples, d.channels
+}
+
+// A big Ogg to shrink: the click track converted at the encoder's top bitrate.
+big_ogg :: proc(t: ^testing.T, mp3_name: string) -> []u8 {
+	result, problem := mp3_to_ogg(load(t, mp3_name), 10_000_000)
+	testing.expect_value(t, problem, Convert_Problem.None)
+	return result.ogg
+}
+
+@(test)
+shrinking_an_ogg_keeps_every_sample_in_place :: proc(t: ^testing.T) {
+	source := big_ogg(t, "click_cbr_info.mp3")
+	defer delete(source)
+	before, channels := decode_with_our_ogg_decoder(t, source)
+
+	// About 96 kbps for 3 s. (A click track is almost all silence, so its Ogg is small at any bitrate;
+	// this test is about timing, shrinking_meets_the_size_limit about size.)
+	result, problem := ogg_shrink(source, 36_000)
+	defer delete(result.ogg)
+	testing.expect_value(t, problem, Convert_Problem.None)
+
+	ours, _ := decode_with_our_ogg_decoder(t, result.ogg)
+	theirs, _ := decode_ogg_all(t, result.ogg) // stb_vorbis: an independent decoder
+	testing.expectf(t, len(ours) == len(before), "%d samples after shrinking, %d before", len(ours) / channels, len(before) / channels)
+	testing.expectf(t, len(theirs) == len(before), "stb_vorbis reads %d samples, %d before", len(theirs) / channels, len(before) / channels)
+	for click in SOURCE_CLICKS {
+		at := click + DECODER_DELAY + LAME_DELAY + INFO_FRAME
+		in_source := peak_near(before[:], channels, at, 4000)
+		in_shrunk := peak_near(theirs, channels, in_source, 4000)
+		testing.expectf(t, abs(in_source - at) <= PEAK_TOLERANCE, "click at %d in the source Ogg, expected %d", in_source, at)
+		testing.expectf(t, abs(in_shrunk - in_source) <= 1, "click on sample %d before shrinking, %d after", in_source, in_shrunk)
+	}
+}
+
+@(test)
+shrinking_meets_the_size_limit :: proc(t: ^testing.T) {
+	source := big_ogg(t, "busy.mp3")
+	defer delete(source)
+	for target in ([?]int{80_000, 120_000, 240_000}) {
+		result, problem := ogg_shrink(source, target)
+		testing.expect_value(t, problem, Convert_Problem.None)
+		testing.expectf(t, len(result.ogg) <= target && len(result.ogg) >= target * 7 / 10, "limit %d: %d bytes", target, len(result.ogg))
+		delete(result.ogg)
+	}
+}
+
+@(test)
+shrinking_a_length_patched_ogg_keeps_the_whole_song :: proc(t: ^testing.T) {
+	source := big_ogg(t, "busy.mp3") // 10 s
+	defer delete(source)
+	ogg_length_patch(source, patched_seconds = 5, if_longer_than = 8) // now states 5 s
+	result, problem := ogg_shrink(source, 120_000)
+	defer delete(result.ogg)
+	testing.expect_value(t, problem, Convert_Problem.None)
+	// The real length, not the stated one: the patch doesn't cut the song short.
+	testing.expectf(t, result.seconds > 9.9, "shrunk song lasts %.2f s", result.seconds)
+	stated, ok := ogg_reported_seconds(result.ogg)
+	testing.expect(t, ok)
+	testing.expectf(t, stated > 9.9, "the shrunk Ogg states %.2f s (it is unpatched until the copy patches it)", stated)
+}

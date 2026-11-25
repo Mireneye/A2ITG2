@@ -148,9 +148,9 @@ draw_songs_page :: proc(l: Layout) {
 			status := state.progress.status
 			fraction := f32(status.done) / f32(max(status.total, 1))
 			right = fmt.tprintf("%d/%d FILES", status.done, status.total)
-			if status.step == .Converting {
+			if status.step == .Converting || status.step == .Shrinking {
 				fraction = f32(status.percent) / 100
-				right = fmt.tprintf("CONVERTING %d%%", status.percent)
+				right = fmt.tprintf("%s %d%%", "CONVERTING" if status.step == .Converting else "SHRINKING", status.percent)
 				if status.pass > 1 do right = fmt.tprintf("SMALLER %d%% (TRY %d)", status.percent, status.pass)
 			}
 			fill_rect(canvas, 0, top, int(f32(canvas.width) * fraction), row, COLOR_ACTIVE)

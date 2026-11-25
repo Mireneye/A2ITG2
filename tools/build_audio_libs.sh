@@ -1,6 +1,7 @@
 #!/bin/sh
-# Builds the audio libraries into one static library, libaudio.a: libmad (MP3 decoding), libogg and libvorbis (Ogg Vorbis
-# encoding). Same sources and settings as StepMania 5, so decoding matches what chart authors heard.
+# Builds the audio libraries into one static library, libaudio.a: libmad (MP3 decoding), libogg and libvorbis
+# (Ogg Vorbis encoding, and decoding through vorbisfile as StepMania does). Same sources and settings as
+# StepMania 5, so decoding matches what chart authors heard.
 # (A shell script: build tooling, run by GitHub's build and in Claude's sandbox for the tests.)
 #
 #   tools/build_audio_libs.sh <output folder> <C compiler> [archiver]
@@ -83,7 +84,7 @@ done
 for f in bitwise framing; do
 	$CC $FLAGS -I"$GEN" -I"$SRC/ogg/include" -c "$SRC/ogg/src/$f.c" -o "$BUILD/ogg/$f.o"
 done
-for f in analysis bitrate block codebook envelope floor0 floor1 info lookup lpc lsp mapping0 mdct psy registry res0 sharedbook smallft synthesis vorbisenc window; do
+for f in analysis bitrate block codebook envelope floor0 floor1 info lookup lpc lsp mapping0 mdct psy registry res0 sharedbook smallft synthesis vorbisenc vorbisfile window; do
 	$CC $FLAGS -I"$GEN" -I"$SRC/ogg/include" -I"$SRC/vorbis/include" -I"$SRC/vorbis/lib" -c "$SRC/vorbis/lib/$f.c" -o "$BUILD/vorbis/$f.o"
 done
 

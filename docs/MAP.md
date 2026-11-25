@@ -13,7 +13,7 @@
 | `src/text.odin` | Pixel drawing and a 5x7 bitmap font (ZZ-Replace: stand-in UI) |
 | `src/web/` | HTTPS GET of a byte range, over `src/tls` |
 | `src/zip/` | Reading a zip a few byte ranges at a time, ZIP64 included; `zip_test.odin` tests it |
-| `src/audio/` | MP3 to Ogg: `mp3_decode.odin` (StepMania's MP3 reading, ported), `convert.odin` (Vorbis encoding to a size limit), `length_patch.odin` (the ITG Ogg length patch), `libraries.odin` (C bindings); tests check sync to the sample |
+| `src/audio/` | MP3 to Ogg and shrinking Oggs: `mp3_decode.odin` and `ogg_decode.odin` (StepMania's MP3 and Ogg reading, ported), `convert.odin` (Vorbis encoding to a size limit), `length_patch.odin` (the ITG Ogg length patch), `libraries.odin` (C bindings); tests check sync to the sample |
 | `src/tls/` | TLS 1.3/1.2 client, copied from Weaving Mirage (see `docs/VENDORED.md`) |
 | `src/inflate/` | Deflate decoder, copied from Folding Mirage (see `docs/VENDORED.md`) |
 | `app/AndroidManifest.xml` | The app's package name, its activity (`OdinActivity`), library name (`a2itg2`), internet permission |
