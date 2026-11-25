@@ -16,6 +16,7 @@ import "core:net"
 import "core:strings"
 import "core:sys/android"
 import glue "core:sys/android/native_app_glue"
+import "chart"
 
 // RGBA in memory: red in the low byte, alpha in the high byte. Navy theme.
 COLOR_BACKGROUND :: 0xff_3a_1e_10 // #101e3a
@@ -185,7 +186,7 @@ draw_songs_page :: proc(l: Layout) {
 		fill_rect(canvas, 0, top, canvas.width, height, background)
 
 		details := fmt.tprintf("%s  %d FILES", megabytes(song.bytes), song.files)
-		if song_on_stick(i) do details = fmt.tprintf("ON STICK  %s", megabytes(song.bytes))
+		on_stick := song_on_stick(i)
 		if i == state.copying {
 			// The row fills as the copy goes: by files, and while converting by the encoding's percent.
 			status := state.progress.status
@@ -213,7 +214,13 @@ draw_songs_page :: proc(l: Layout) {
 		mark := sync_mark(song.sync) if i != state.copying else ""
 		mark_width := (len(mark) + 2) * CELL_WIDTH * scale if mark != "" else 0
 		name_columns := l.columns + MARGIN_CELLS - button_columns - 1
-		draw_two_lines(l, top, strings.to_upper(song.name, context.temp_allocator), details, COLOR_TEXT, COLOR_DIM, name_columns - (len(mark) + 2 if mark != "" else 0), name_columns)
+		details_columns := name_columns - (len(mark) + 2 if mark != "" else 0)
+		if (song.info.state == .Read || song.info.state == .No_Sm) && !(i == state.copying || (i == state.preview_song && state.preview_page == .Songs && state.preview != .Idle)) {
+			details = info_text(song.info, details_columns)
+		}
+		name := strings.to_upper(song.name, context.temp_allocator)
+		if on_stick do name = fmt.tprintf("%c %s", rune(GLYPH_STICK), name) // already on the stick
+		draw_two_lines(l, top, name, details, COLOR_GOOD if on_stick else COLOR_TEXT, COLOR_DIM, details_columns, name_columns)
 		row_bottom := min(top + l.list_row, l.bottom)
 		if mark != "" {
 			// The mark at the second line's right end, by the play button; tapping it opens or closes the foldout.
@@ -430,6 +437,41 @@ draw_two_lines :: proc(l: Layout, top: int, first, second: string, first_color, 
 	y := top + 3 * l.scale
 	draw_text(l.canvas, fit(first, first_columns if first_columns >= 0 else l.columns), margin, y, l.scale, first_color)
 	draw_text(l.canvas, fit(second, second_columns if second_columns >= 0 else l.columns), margin, y + CELL_HEIGHT * l.scale, l.scale, second_color)
+}
+
+// A song row's details from its chart, "B1 E4 M8 H11 C13  2:05  148", made to fit `columns`: first the
+// beginner chart goes, then the wide gaps, then the tempo. The harder difficulties always stay.
+@(private = "file")
+info_text :: proc(info: Song_Info_Text, columns: int) -> string {
+	if info.state == .No_Sm do return "NO .SM: ITG2 CAN'T USE IT"
+	letters := [chart.Difficulty]u8{.Beginner = 'B', .Easy = 'E', .Medium = 'M', .Hard = 'H', .Challenge = 'C'}
+	s := info.summary
+	bpm := ""
+	switch {
+	case s.bpm_unknown:           bpm = "?BPM"
+	case s.bpm_high <= 0:
+	case s.bpm_low == s.bpm_high: bpm = fmt.tprintf("%.0f", s.bpm_high)
+	case:                         bpm = fmt.tprintf("%.0f-%.0f", s.bpm_low, s.bpm_high)
+	}
+	length := minutes(s.seconds) if s.seconds > 0 else ""
+	attempt :: proc(s: chart.Summary, letters: [chart.Difficulty]u8, beginner: bool, gap, length, bpm: string) -> string {
+		b := strings.builder_make(context.temp_allocator)
+		for meter, difficulty in s.meters {
+			if meter <= 0 || (difficulty == .Beginner && !beginner) do continue
+			if strings.builder_len(b) > 0 do strings.write_byte(&b, ' ')
+			fmt.sbprintf(&b, "%c%d", letters[difficulty], meter)
+		}
+		for part in ([2]string{length, bpm}) do if part != "" do fmt.sbprintf(&b, "%s%s", gap, part)
+		return strings.to_string(b)
+	}
+	tries := [?]string{
+		attempt(s, letters, true, "  ", length, bpm),
+		attempt(s, letters, false, "  ", length, bpm),
+		attempt(s, letters, false, " ", length, bpm),
+		attempt(s, letters, false, " ", length, ""),
+	}
+	for text in tries do if len(text) <= columns do return text
+	return tries[len(tries) - 1]
 }
 
 // "SYNC +9 MS", "SYNC ?", or "" when there's nothing to flag (in sync, or not measured).

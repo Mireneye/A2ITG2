@@ -196,3 +196,27 @@ tags_found_in_charts_that_are_not_utf8 :: proc(t: ^testing.T) {
 	testing.expect_value(t, offset, "-0.202")
 	testing.expect_value(t, len(changed), len(sm))
 }
+
+@(test)
+summaries_of_the_cab_songs :: proc(t: ^testing.T) {
+	sm_bytes, err := os.read_entire_file(SYNC_FIXTURES + "arabian.sm", context.allocator)
+	if err != nil do return
+	defer delete(sm_bytes)
+	timing, _ := read_timing(string(sm_bytes))
+	defer timing_destroy(&timing)
+	s := summary(string(sm_bytes), timing)
+	fmt.printfln("arabian: %v, %.0f-%.0f BPM, %.1f s", s.meters, s.bpm_low, s.bpm_high, s.seconds)
+	testing.expect_value(t, s.meters[.Challenge], 9)
+	testing.expect_value(t, s.bpm_low, 69.0)
+	testing.expect_value(t, s.bpm_high, 138.0)
+
+	turii_bytes, turii_err := os.read_entire_file(SYNC_FIXTURES + "turii.sm", context.allocator)
+	if turii_err != nil do return
+	defer delete(turii_bytes)
+	turii_timing, _ := read_timing(string(turii_bytes))
+	defer timing_destroy(&turii_timing)
+	ts := summary(string(turii_bytes), turii_timing)
+	fmt.printfln("turii: %v, %.0f-%.0f BPM, %.1f s", ts.meters, ts.bpm_low, ts.bpm_high, ts.seconds)
+	testing.expect(t, ts.meters == {.Beginner = 1, .Easy = 4, .Medium = 8, .Hard = 11, .Challenge = 13}, "turii's meters")
+	testing.expect_value(t, ts.bpm_high, 148.0) // #DISPLAYBPM:148
+}

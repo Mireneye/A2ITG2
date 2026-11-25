@@ -7,6 +7,10 @@ loop keeps answering touches (Android closes apps that leave input unanswered fo
 	take_messages()              from the app's loop, after the worker woke it
 
 The worker owns the open pack; the screen gets copies of what it shows (Song_Row).
+
+Song_Info jobs (a song's difficulties, tempo and length for its row) wait in a lane of their own and run
+only when nothing else is waiting: a pack's worth of them takes a while and must never hold up a copy
+or a preview.
 */
 package a2itg2
 
@@ -102,7 +106,14 @@ Delete_Stick_Song :: struct {
 	name:      string, // heap; for the status line
 }
 
+// A song's chart, read for its row (low priority, see above).
+Song_Info :: struct {
+	index:   int,
+	pack_id: int,
+}
+
 Job :: union {
+	Song_Info,
 	Name_Stick,
 	Delete_Stick_Song,
 	Preview_Song,
@@ -123,6 +134,7 @@ Song_Row :: struct {
 	bytes: i64,
 	files: int,
 	sync:  Song_Sync, // after a copy: how its notes sit on the music
+	info:  Song_Info_Text, // difficulties, tempo, length, once read (Song_Info)
 }
 
 // What the worker tells the screen.
@@ -199,7 +211,14 @@ Preview_Ready :: struct {
 	preview: Preview, // empty sound when it failed
 }
 
+Song_Info_Ready :: struct {
+	index:   int,
+	pack_id: int,
+	info:    Song_Info_Text, // .None when the song has no readable .sm
+}
+
 Message :: union {
+	Song_Info_Ready,
 	Stick_Names,
 	Stick_Deleted,
 	Preview_Ready,
@@ -216,6 +235,7 @@ Message :: union {
 
 @(private = "file") jobs_lock:     sync.Mutex
 @(private = "file") jobs:          [dynamic]Job
+@(private = "file") info_jobs:     [dynamic]Song_Info // the low-priority lane
 @(private = "file") jobs_waiting:  sync.Sema
 @(private = "file") messages_lock: sync.Mutex
 @(private = "file") messages:      [dynamic]Message
@@ -232,7 +252,11 @@ worker_start :: proc() {
 
 worker_ask :: proc(job: Job) {
 	sync.mutex_lock(&jobs_lock)
-	append(&jobs, job)
+	if info, is_info := job.(Song_Info); is_info {
+		append(&info_jobs, info)
+	} else {
+		append(&jobs, job)
+	}
 	sync.mutex_unlock(&jobs_lock)
 	sync.sema_post(&jobs_waiting)
 }
@@ -268,7 +292,7 @@ worker_main :: proc() {
 	for {
 		sync.sema_wait(&jobs_waiting)
 		sync.mutex_lock(&jobs_lock)
-		job := pop_front(&jobs)
+		job: Job = pop_front(&jobs) if len(jobs) > 0 else Job(pop_front(&info_jobs))
 		sync.mutex_unlock(&jobs_lock)
 
 		switch j in job {
@@ -302,6 +326,10 @@ worker_main :: proc() {
 			if problem != "" do say_from_worker(.Bad, "COULD NOT READ THIS SONG'S CHART", problem)
 			tell(Stick_Opened{index = j.index, stamp = j.stamp, chart = chart})
 		case Set_Stick_Offset: do_set_stick_offset(j)
+		case Song_Info:
+			if j.pack_id != pack.id || j.index < 0 || j.index >= len(pack.songs) do break // another pack is open by now
+			info := song_info(&anchors, &pack, j.index)
+			tell(Song_Info_Ready{index = j.index, pack_id = j.pack_id, info = info})
 		case Name_Stick:
 			defer delete(j.tree)
 			names, problem := stick_names(j.tree)

@@ -184,3 +184,11 @@ the song: open, DELETE, confirm, three deliberate taps. Deleting takes the folde
 on the stick (compared in lower case, with the characters FAT can't hold as Android replaces them) say
 ON STICK; copying one again asks, then deletes the old copy before copying, where before it silently made
 a second folder ("Song (1)").
+
+**Song details on SONGS.** Each row's second line shows its chart's single difficulties (B E M H C and their
+meters), how long the steps last and the tempo (`#DISPLAYBPM` when set, else the range of `#BPMS`), shortened
+to fit: the beginner chart goes first, then the wide gaps, then the tempo. Reading them means fetching each
+song's `.sm`, a small range request each (a 50-song pack takes some 30 s in all), so these jobs wait in a lane
+of their own and run only when no copy, preview or other job is waiting; the charts land in the preview cache,
+so reopening a pack is instant. A song with only `.ssc`/`.dwi` says so before anyone tries to copy it. Songs
+already on the stick carry a small USB stick symbol before their name.

@@ -18,7 +18,9 @@ The screen, top to bottom (screen.odin draws it):
 	PATCH row   whether Oggs over 1:45 are length patched to read as 1:45; tap to switch
 	PACK row    the open pack; tap to read it again
 	the pack's songs; tap one to copy it into the stick folder (videos are left out). Songs already on
-	the stick say ON STICK; copying one again asks first, then replaces it. The button at a
+	the stick have a USB stick symbol before their name (in green); copying one again asks first, then replaces it. A
+	song's second line shows its difficulties, length and tempo (e.g. E4 M8 H11 C13 2:05 148) once its
+	chart has been read, which happens in the background, after anything else. The button at a
 	song's right plays it from its preview point (#SAMPLESTART), and pauses it; its audio is kept in
 	the app, so copying it afterwards doesn't download it again. A copied song
 	whose notes sit off its music carries a sync mark at the right (SYNC +9 MS, or SYNC ? when it
@@ -366,6 +368,8 @@ handle_worker_messages :: proc() {
 		case Pack_Ready:
 			if state.preview_page == .Songs do stop_preview()
 			ask_stick_names()
+			// Every song's details, in list order, as the worker has time.
+			for i in 0..<len(m.rows) do worker_ask(Song_Info{index = i, pack_id = m.id})
 			free_song_rows()
 			state.pack_id, state.pack_name, state.songs = m.id, m.name, m.rows
 			state.fold_open = -1
@@ -383,6 +387,8 @@ handle_worker_messages :: proc() {
 			}
 			free_pack_rows(state.results)
 			state.results, state.results_scroll = m.rows, 0
+		case Song_Info_Ready:
+			if m.pack_id == state.pack_id && m.index < len(state.songs) do state.songs[m.index].info = m.info
 		case Stick_Names:
 			for name in state.stick_names do delete(name)
 			clear(&state.stick_names)

@@ -495,6 +495,39 @@ trim_preview_cache :: proc(folder: string) {
 	}
 }
 
+// A song's row details, from its chart: difficulties, tempo, length. Fixed size (no memory to free).
+Song_Info_Text :: struct {
+	state:   Song_Info_State,
+	summary: chart.Summary,
+}
+
+Song_Info_State :: enum u8 {
+	Unknown,  // not read yet
+	Read,
+	No_Sm,    // only .ssc/.dwi: the cabinet can't use it
+	Failed,   // the chart couldn't be fetched or read
+}
+
+// Reads the song's .sm (kept in the preview cache) for its row.
+song_info :: proc(anchors: ^tls.Trust_Anchors, pack: ^Pack, index: int) -> (info: Song_Info_Text) {
+	song := pack.songs[index]
+	sm := -1
+	for entry_index in song.files {
+		if strings.to_lower(extension_of(pack.entries[entry_index].name), context.temp_allocator) == ".sm" {
+			sm = entry_index
+			break
+		}
+	}
+	if sm < 0 do return {state = .No_Sm}
+	bytes, problem := fetch_entry_cached(anchors, pack, sm, keep = true)
+	if problem.what != "" do return {state = .Failed}
+	defer delete(bytes)
+	timing, ok := chart.read_timing(string(bytes))
+	if !ok do return {state = .Failed}
+	defer chart.timing_destroy(&timing)
+	return {state = .Read, summary = chart.summary(string(bytes), timing)}
+}
+
 // What a preview plays: the song's audio, where its preview starts, and the chart's beats for the
 // metronome.
 Preview :: struct {

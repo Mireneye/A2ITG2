@@ -229,3 +229,72 @@ format_offset :: proc(offset: f64) -> string {
 	if text == "-0.000" do text = "0.000"
 	return text
 }
+
+Difficulty :: enum u8 {
+	Beginner,
+	Easy,
+	Medium,
+	Hard,
+	Challenge,
+}
+
+// What a song list shows about a chart file: each single difficulty's meter (0: none), the tempo, and
+// how long the steps last.
+Summary :: struct {
+	meters:      [Difficulty]int,
+	bpm_low:     f64,
+	bpm_high:    f64,
+	bpm_unknown: bool, // #DISPLAYBPM:*; (it hides the tempo on purpose)
+	seconds:     f64,  // when the last note comes
+}
+
+// dance-single only (the cabinet's mode); edits aren't listed, as the song wheel shows them apart.
+summary :: proc(sm: string, t: Timing) -> (s: Summary) {
+	DIFFICULTY_NAMES :: [Difficulty]string{.Beginner = "beginner", .Easy = "easy", .Medium = "medium", .Hard = "hard", .Challenge = "challenge"}
+	rest := sm
+	for {
+		at := index_of_tag(rest, "NOTES")
+		if at < 0 do break
+		rest = rest[at + len("#NOTES:"):]
+		end := strings.index_byte(rest, ';')
+		block := rest if end < 0 else rest[:end]
+		fields := strings.split_n(block, ":", 6, context.temp_allocator)
+		if len(fields) == 6 && strings.trim_space(strip_comment_lines(fields[0])) == "dance-single" {
+			name := strings.to_lower(strings.trim_space(strip_comment_lines(fields[2])), context.temp_allocator)
+			if name == "expert" do name = "challenge" // an older name
+			meter, _ := strconv.parse_int(strings.trim_space(strip_comment_lines(fields[3])))
+			for difficulty_name, difficulty in DIFFICULTY_NAMES do if name == difficulty_name do s.meters[difficulty] = meter
+		}
+		if end < 0 do break
+		rest = rest[end:]
+	}
+	if display, found := tag_value(sm, "DISPLAYBPM"); found && strings.trim_space(display) != "" {
+		text := strings.trim_space(display)
+		if text == "*" {
+			s.bpm_unknown = true
+		} else {
+			low_text, _, high_text := strings.partition(text, ":")
+			s.bpm_low, _ = strconv.parse_f64(strings.trim_space(low_text))
+			s.bpm_high = s.bpm_low
+			if high_text != "" do s.bpm_high, _ = strconv.parse_f64(strings.trim_space(high_text))
+		}
+	} else {
+		s.bpm_low, s.bpm_high = max(f64), 0
+		for change in t.bpms {
+			if change.value <= 0 do continue // warps and the like
+			s.bpm_low, s.bpm_high = min(s.bpm_low, change.value), max(s.bpm_high, change.value)
+		}
+		if s.bpm_high == 0 do s.bpm_low = 0
+	}
+	notes := note_seconds(sm, t, context.temp_allocator)
+	if len(notes) > 0 do s.seconds = notes[len(notes) - 1]
+	return
+}
+
+@(private = "file")
+strip_comment_lines :: proc(text: string) -> string {
+	out := strings.builder_make(context.temp_allocator)
+	rest := text
+	for line in strings.split_lines_iterator(&rest) do strings.write_string(&out, strip_comment(line))
+	return strings.to_string(out)
+}
