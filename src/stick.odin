@@ -126,12 +126,37 @@ stick_set_offset :: proc(tree, sm_id: string, offset: f64) -> (problem: string) 
 	text, read_problem := read_document(tree, sm_id)
 	if read_problem != "" do return read_problem
 	defer delete(text)
-	if _, has_offset := chart_offset(string(text)); !has_offset do return "THE CHART HAS NO #OFFSET"
+	if _, has_offset := chart_offset(string(text)); !has_offset {
+		// ZZ-Attention: diagnosing a second nudge failing here (Squaredance): what the stick gave back.
+		return fmt.tprintf("THE CHART HAS NO #OFFSET (READ %d BYTES: \"%s\")", len(text), printable_start(text))
+	}
 	if !has_backup(tree, sm_id) {
 		if write_problem := write_backup(tree, sm_id, text); write_problem != "" do return write_problem
 	}
-	changed := replace_tag_value(string(text), "OFFSET", format_offset(offset))
-	return overwrite_document(tree, sm_id, transmute([]u8)changed)
+	changed := transmute([]u8)replace_tag_value(string(text), "OFFSET", format_offset(offset))
+	if write_problem := overwrite_document(tree, sm_id, changed); write_problem != "" do return write_problem
+	return verify_written(tree, sm_id, changed)
+}
+
+// Reads a file back and says how it differs from what was written ("" when it is the same), so a stick
+// that keeps something else is caught when it happens, not at the next change.
+@(private = "file")
+verify_written :: proc(tree, document_id: string, wrote: []u8) -> string {
+	back, problem := read_document(tree, document_id)
+	if problem != "" do return fmt.tprintf("COULD NOT READ IT BACK: %s", problem)
+	defer delete(back)
+	if string(back) == string(wrote) do return ""
+	first := 0
+	for first < min(len(back), len(wrote)) && back[first] == wrote[first] do first += 1
+	return fmt.tprintf("THE STICK HAS %d BYTES, NOT THE %d WRITTEN, DIFFERENT FROM BYTE %d (\"%s\")", len(back), len(wrote), first, printable_start(back[first:]))
+}
+
+// Up to 24 characters of `bytes`, unprintable ones as '?'.
+@(private = "file")
+printable_start :: proc(bytes: []u8) -> string {
+	out := make([]u8, min(len(bytes), 24), context.temp_allocator)
+	for &c, i in out do c = bytes[i] if bytes[i] >= 0x20 && bytes[i] < 0x7f else '?'
+	return string(out)
 }
 
 // Puts the original chart back and forgets the backup.
