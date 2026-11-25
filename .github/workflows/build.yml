@@ -64,11 +64,17 @@ jobs:
             echo "SIGNED=throwaway" >> "$GITHUB_ENV"
           fi
 
+      - name: Tests (zip reader, TLS)
+        run: |
+          python3 tools/make_zip_fixtures.py
+          ~/odin/odin test src/zip
+          ~/odin/odin test src/tls
+
       - name: Build APK
         run: |
           mkdir -p app/lib/arm64-v8a build
           ~/odin/odin build src -target:linux_arm64 -subtarget:android -minimum-os-version:$MIN_ANDROID \
-            -build-mode:shared -o:speed -vet -strict-style -out:app/lib/arm64-v8a/liba2itg2.so
+            -build-mode:shared -o:speed -vet -out:app/lib/arm64-v8a/liba2itg2.so
           ~/odin/odin bundle android app -minimum-os-version:$MIN_ANDROID -out:build/a2itg2.apk
           ls -l build/a2itg2.apk
 

@@ -50,6 +50,16 @@ documents_build_document_uri_using_tree :: proc "contextless" (tree: ^java.Uri, 
 	return (^java.Uri)(env->CallStaticObjectMethodA(class, method, &args[0])), take_exception(env)
 }
 
+documents_get_document_id :: proc "contextless" (document: ^java.Uri) -> (id: ^java.String, exception: ^java.Throwable) {
+	@(static) cache: android.jmethodID
+	env, class, method := documents_method(&cache, "getDocumentId", "(Landroid/net/Uri;)Ljava/lang/String;") or_return
+	args := [?]android.jvalue{{l = document}}
+	return (^java.String)(env->CallStaticObjectMethodA(class, method, &args[0])), take_exception(env)
+}
+
+// The MIME type that makes documents_create_document make a folder (DocumentsContract.Document.MIME_TYPE_DIR).
+DOCUMENT_FOLDER_MIME :: "vnd.android.document/directory"
+
 // Creates a file in `parent` (a document URI). Android adds " (1)" etc. if the name is taken.
 documents_create_document :: proc "contextless" (resolver: ^java.ContentResolver, parent: ^java.Uri, mime_type, display_name: ^java.String) -> (uri: ^java.Uri, exception: ^java.Throwable) {
 	@(static) cache: android.jmethodID

@@ -3,3 +3,4 @@ app/lib/
 *.apk
 *.aab
 *.so
+tests/fixtures/

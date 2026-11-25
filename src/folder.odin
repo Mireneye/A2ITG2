@@ -5,7 +5,8 @@ Folder access through Android's folder picker (the Storage Access Framework).
 	take_picker_result     hands that answer to the app's own loop
 	keep_folder_access     asks Android to remember the access across restarts
 	folder_access_kept     checks a remembered folder is still accessible
-	write_file_in_folder   creates a file in the folder and writes bytes to it
+	root_folder, create_folder, write_file
+	                       make folders and files inside the picked folder (files are fsynced)
 
 A folder is identified by its "address": the picker's content:// URI as text.
 The calls that can fail return "" on success, or a short error to show on screen.
@@ -144,50 +145,81 @@ folder_access_kept :: proc(address: string) -> bool {
 	return kept
 }
 
-write_file_in_folder :: proc(address, name: string, bytes: []byte) -> string {
-	// Returns the new file as an open file handle.
-	create :: proc(address, name: string) -> (fd: i32, exception: ^java.Throwable) {
-		tree := parse_uri(address) or_return
-		resolver := content_resolver() or_return
-		folder_id := documents_get_tree_document_id(tree) or_return
-		folder := documents_build_document_uri_using_tree(tree, folder_id) or_return
-		mime := java.string_from("text/plain") or_return
-		file_name := java.string_from(name) or_return
-		file := documents_create_document(resolver, folder, mime, file_name) or_return
-		if file == nil {
-			return -1, nil
-		}
-		write_mode := java.string_from("w") or_return
-		descriptor := java.ContentResolver_openFileDescriptor_Uri_String(resolver, file, write_mode) or_return
-		return java.ParcelFileDescriptor_detachFd(descriptor)
-	}
+// A folder inside the picked tree: the tree's address plus the folder's document id.
+Folder_Ref :: struct {
+	tree:        string,
+	document_id: string, // allocated with the caller's allocator
+}
 
-	fd, exception := create_in_local_frame(address, name, create)
-	if exception != nil {
-		return describe(exception)
+// The picked folder itself.
+root_folder :: proc(tree: string, allocator := context.allocator) -> (folder: Folder_Ref, problem: string) {
+	inner :: proc(tree: string, allocator := context.allocator) -> (id: string, exception: ^java.Throwable) {
+		uri := parse_uri(tree) or_return
+		java_id := documents_get_tree_document_id(uri) or_return
+		return java.string_to(java_id, allocator)
 	}
-	if fd < 0 {
-		return "ANDROID REFUSED TO CREATE THE FILE"
+	local_frame_scope()
+	id, exception := inner(tree, allocator)
+	if exception != nil do return {}, describe(exception)
+	return {tree = tree, document_id = id}, ""
+}
+
+// Makes a folder called `name` in `parent`. Android adds " (1)" etc. if the name is taken, and
+// replaces characters FAT32 can't hold.
+create_folder :: proc(parent: Folder_Ref, name: string, allocator := context.allocator) -> (folder: Folder_Ref, problem: string) {
+	inner :: proc(parent: Folder_Ref, name: string, allocator := context.allocator) -> (id: string, exception: ^java.Throwable) {
+		uri := create_document(parent, DOCUMENT_FOLDER_MIME, name) or_return
+		if uri == nil do return "", nil
+		java_id := documents_get_document_id(uri) or_return
+		return java.string_to(java_id, allocator)
 	}
+	local_frame_scope()
+	id, exception := inner(parent, name, allocator)
+	if exception != nil do return {}, describe(exception)
+	if id == "" do return {}, "ANDROID REFUSED TO CREATE THE FOLDER"
+	return {tree = parent.tree, document_id = id}, ""
+}
+
+// Writes `bytes` to a new file in `folder`, and makes sure they are on the stick (fsync) before
+// returning, so pulling the stick afterwards loses nothing.
+write_file :: proc(folder: Folder_Ref, name: string, bytes: []u8, mime := "application/octet-stream") -> string {
+	fd, exception := open_new_file(folder, name, mime)
+	if exception != nil do return describe(exception)
+	if fd < 0 do return "ANDROID REFUSED TO CREATE THE FILE"
 
 	// From here on it is an ordinary file handle.
 	defer posix.close(posix.FD(fd))
 	for written := 0; written < len(bytes); {
 		remaining := bytes[written:]
 		n := posix.write(posix.FD(fd), raw_data(remaining), uint(len(remaining)))
-		if n <= 0 {
-			return fmt.tprintf("WRITE STOPPED AFTER %d OF %d BYTES", written, len(bytes))
-		}
+		if n <= 0 do return fmt.tprintf("WRITE STOPPED AFTER %d OF %d BYTES", written, len(bytes))
 		written += int(n)
 	}
+	if posix.fsync(posix.FD(fd)) != .OK do return "COULD NOT FLUSH THE FILE TO THE STICK"
 	return ""
 }
 
-// The Java part of a write gets its own frame, popped before the (possibly long) plain write.
+// A new file in `folder`, open for writing; -1 if Android made no file.
 @(private = "file")
-create_in_local_frame :: proc(address, name: string, create: proc(address, name: string) -> (i32, ^java.Throwable)) -> (i32, ^java.Throwable) {
+open_new_file :: proc(folder: Folder_Ref, name, mime: string) -> (fd: i32, exception: ^java.Throwable) {
 	local_frame_scope()
-	return create(address, name)
+	file := create_document(folder, mime, name) or_return
+	if file == nil do return -1, nil
+	resolver := content_resolver() or_return
+	write_mode := java.string_from("w") or_return
+	descriptor := java.ContentResolver_openFileDescriptor_Uri_String(resolver, file, write_mode) or_return
+	return java.ParcelFileDescriptor_detachFd(descriptor)
+}
+
+@(private = "file")
+create_document :: proc(parent: Folder_Ref, mime, name: string) -> (uri: ^java.Uri, exception: ^java.Throwable) {
+	tree := parse_uri(parent.tree) or_return
+	parent_id := java.string_from(parent.document_id) or_return
+	parent_uri := documents_build_document_uri_using_tree(tree, parent_id) or_return
+	resolver := content_resolver() or_return
+	java_mime := java.string_from(mime) or_return
+	java_name := java.string_from(name) or_return
+	return documents_create_document(resolver, parent_uri, java_mime, java_name)
 }
 
 // "" when there was no exception, otherwise its description.

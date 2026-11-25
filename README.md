@@ -3,10 +3,10 @@
 An Android app that takes songs from StepMania pack sites onto an ITG2 arcade cabinet's USB stick,
 through the phone's USB OTG port. Written in Odin; a functional app, not a pretty one.
 
-**Status: first test.** The app can pick a folder through Android's folder picker, keep access to it
-across restarts, and write files into it. That proves every phone-side piece the real app needs
-before the pack work starts. See [docs/DESIGN.md](docs/DESIGN.md) for the plan and [docs/MAP.md](docs/MAP.md)
-for where things live.
+**Status: copying single songs.** The app reads a pack's table of contents over HTTPS (a few small byte
+ranges, not the whole pack), lists its songs, and copies a tapped song onto the stick: its `.sm` chart and
+the files the chart names, without videos. No audio conversion yet, so MP3 songs won't play on the cabinet.
+See [docs/DESIGN.md](docs/DESIGN.md) for the plan and [docs/MAP.md](docs/MAP.md) for where things live.
 
 ## Getting the app
 
@@ -29,13 +29,13 @@ command-line tools with `"platform-tools" "build-tools;37.0.0" "platforms;androi
     build.bat            builds build\a2itg2.apk
     build.bat install    also installs and starts it on a phone plugged in with USB debugging
 
-## The first test
+## Using it
 
-1. Plug the USB stick into the phone and open A2ITG2. The top strip is blue; the text says no folder is picked.
-2. Tap the screen. Android's folder picker opens. Choose the USB stick (or a folder on it) and allow access.
-3. Expected: the strip turns green and the text says `WROTE A2ITG2_PICK.TXT`.
-4. Close the app fully (swipe it away from recent apps) and open it again.
-5. Expected, without any picker: green again, with `REOPENED: ACCESS KEPT WITHOUT ASKING.` and `WROTE A2ITG2_REOPEN.TXT`.
-6. On a PC, the stick holds `a2itg2_pick.txt` and `a2itg2_reopen.txt`.
+1. Plug the stick into the phone and open A2ITG2.
+2. Tap the **STICK** row and pick the folder songs should go in: on a stick the cabinet has used, its
+   "In The Groove 2" folder's Songs folder. The app remembers it.
+3. The pack (for now always #10850, a small test pack) is read on start; its songs appear below.
+   Tap **PACK** to read it again.
+4. Tap a song. Its row shows the files as they copy; the top strip turns green with `SAFE TO UNPLUG`.
 
-A red strip means a step failed; the text under it says which and why.
+Blue strip: working. Green: done. Red: a step failed, and the text says which and why.

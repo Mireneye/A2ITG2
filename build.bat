@@ -29,7 +29,7 @@ if not exist %ABI_DIR% mkdir %ABI_DIR%
 if not exist build mkdir build
 
 echo Compiling ...
-odin build src -target:linux_arm64 -subtarget:android -minimum-os-version:%MIN_ANDROID% -build-mode:shared -o:speed -vet -strict-style -out:%ABI_DIR%\liba2itg2.so || exit /b 1
+odin build src -target:linux_arm64 -subtarget:android -minimum-os-version:%MIN_ANDROID% -build-mode:shared -o:speed -vet -out:%ABI_DIR%\liba2itg2.so || exit /b 1
 
 echo Bundling ...
 odin bundle android app -minimum-os-version:%MIN_ANDROID% -out:build\a2itg2.apk || exit /b 1

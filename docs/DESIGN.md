@@ -15,7 +15,9 @@ cabinet's USB stick from the phone. Planned features beyond a plain copy:
 - **Odin** for all app code, built with Odin's Android target (`-subtarget:android`, `odin bundle android`).
 - **libmad** (MP3 decoding) and **libvorbis** (Ogg Vorbis encoding), C libraries called with `foreign import`.
   libmad is GPL: fine for personal use; sharing the app means releasing its source under the GPL.
-- **TLS** from Weaving Mirage / Storming Mirage; on Android the trusted roots come from `/system/etc/security/cacerts/`.
+- **TLS** copied from Weaving Mirage (`src/tls`, see `docs/VENDORED.md`); on Android the trusted roots come from
+  `/apex/com.android.conscrypt/cacerts` or `/system/etc/security/cacerts`.
+- **Deflate** copied from Folding Mirage (`src/inflate`), for unpacking songs from the zips.
 - **Android's folder picker** for the USB stick, through `vendor:android/java`.
 
 ## Findings
@@ -43,6 +45,22 @@ So the converter decodes with libmad, follows those three rules, and encodes eve
 The OGG then lines up with the MP3 sample for sample and the chart's offset stays right without knowing
 the encoder's delay. Vorbis adds no delay of its own. What remains is the known ~9 ms difference between
 charts synced for PC and for ITG machines, which the offset feature covers.
+
+**A song is its .sm chart and the files the chart names.** A song folder holds the chart (`.sm`;
+StepMania 5 packs may also or only have `.ssc`, old ones `.dwi`), the audio (`.ogg`, or `.mp3` that the
+cabinet can't play), and optionally a banner, background and CD title picture, a lyrics file (`.lrc`),
+background or banner videos, and leftovers like `.old` backups. File names need not match the folder or
+each other: the chart's `#MUSIC`, `#BANNER`, `#BACKGROUND`, `#CDTITLE` and `#LYRICSPATH` tags name them.
+So copying a song means: read its `.sm`, copy it and the files it names that sit in the song folder,
+leave out videos. ITG2 reads `.sm` only, so a song without one can't be copied as is.
+
+**Where songs go on the stick.** The cabinet makes an "In The Groove 2" folder on a stick the first time
+it reads it; song folders go into its Songs folder. The app copies into whatever folder is picked, so
+picking that Songs folder puts songs where the cabinet looks.
+
+**Revisions matter for long songs.** Custom songs from the stick came with the r21 update; r23 cuts
+every custom song at 120 seconds whether or not the .ogg is patched, so the .ogg length patch only helps
+on r21 cabinets.
 
 **Stock cabinet limits** (from players, to be confirmed on the cabinet): about 50 songs per stick,
 audio under 5 MB and in OGG, songs fading out around 105 s. A modded cabinet (Simply Love theme) may lift

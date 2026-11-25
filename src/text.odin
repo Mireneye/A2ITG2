@@ -36,8 +36,9 @@ fill_rect :: proc(canvas: Canvas, x, y, width, height: int, color: u32) {
 	}
 }
 
-// Draws the lines from `top` down, wrapping at word boundaries. Older lines scroll off the top.
-draw_lines :: proc(canvas: Canvas, lines: []string, scale, top: int) {
+// Draws the newest of `lines` in `max_rows` text rows from `top` down, wrapping at word boundaries.
+// Older rows scroll off the top; the area itself never changes size.
+draw_lines :: proc(canvas: Canvas, lines: []string, scale, top, max_rows: int) {
 	columns := canvas.width / (CELL_WIDTH * scale) - 2 * MARGIN_CELLS
 	if columns < 8 {
 		return
@@ -45,15 +46,24 @@ draw_lines :: proc(canvas: Canvas, lines: []string, scale, top: int) {
 	wrapped := make([dynamic]string, context.temp_allocator)
 	for line in lines {
 		wrap(&wrapped, line, columns)
-		append(&wrapped, "") // a blank row between messages
 	}
 
-	rows_that_fit := (canvas.height - top) / (CELL_HEIGHT * scale)
-	first := max(len(wrapped) - rows_that_fit, 0)
+	first := max(len(wrapped) - max_rows, 0)
 	left := MARGIN_CELLS * CELL_WIDTH * scale
 	for row, i in wrapped[first:] {
-		draw_text(canvas, row, left, top + i * CELL_HEIGHT * scale, scale)
+		// The newest message is bright, older ones dimmed.
+		color := u32(COLOR_TEXT) if first + i >= len(wrapped) - newest_rows(lines[len(lines) - 1:], columns) else u32(COLOR_DIM)
+		draw_text(canvas, row, left, top + i * CELL_HEIGHT * scale, scale, color)
 	}
+}
+
+// How many rows the last message takes once wrapped.
+@(private = "file")
+newest_rows :: proc(last: []string, columns: int) -> int {
+	if len(last) == 0 do return 0
+	rows := make([dynamic]string, context.temp_allocator)
+	wrap(&rows, last[0], columns)
+	return len(rows)
 }
 
 @(private = "file")
@@ -70,7 +80,7 @@ wrap :: proc(out: ^[dynamic]string, line: string, columns: int) {
 	append(out, rest)
 }
 
-draw_text :: proc(canvas: Canvas, text: string, x, y, scale: int) {
+draw_text :: proc(canvas: Canvas, text: string, x, y, scale: int, color: u32 = COLOR_TEXT) {
 	for i in 0..<len(text) {
 		c := text[i]
 		has_glyph := c < len(FONT) && (c == ' ' || FONT[c] != {})
@@ -80,7 +90,7 @@ draw_text :: proc(canvas: Canvas, text: string, x, y, scale: int) {
 			bits := glyph[row]
 			for column in 0..<GLYPH_WIDTH {
 				if bits & (0b10000 >> uint(column)) != 0 {
-					fill_rect(canvas, left + column*scale, y + row*scale, scale, scale, COLOR_TEXT)
+					fill_rect(canvas, left + column*scale, y + row*scale, scale, scale, color)
 				}
 			}
 		}
