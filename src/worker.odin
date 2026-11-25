@@ -28,9 +28,21 @@ Copy_Song :: struct {
 	options: Copy_Options,
 }
 
+Load_Catalog :: struct {
+	private_dir: string, // heap; the worker frees it
+}
+
+Search_Packs :: struct {
+	kind:  Search_Kind,
+	query: string, // heap; the worker frees it
+	stamp: int,    // the screen keeps only the answer to its latest search
+}
+
 Job :: union {
 	Open_Pack,
 	Copy_Song,
+	Load_Catalog,
+	Search_Packs,
 }
 
 Song_Row :: struct {
@@ -57,10 +69,16 @@ Copy_Progress :: struct {
 	finished: bool,
 }
 
+Search_Results :: struct {
+	stamp: int,
+	rows:  []Pack_Row, // heap
+}
+
 Message :: union {
 	Say,
 	Pack_Ready,
 	Copy_Progress,
+	Search_Results,
 }
 
 @(private = "file") jobs_lock:     sync.Mutex
@@ -72,6 +90,7 @@ Message :: union {
 // Worker-side state.
 @(private = "file") anchors:      tls.Trust_Anchors
 @(private = "file") pack:         Pack
+@(private = "file") catalog:      Catalog
 @(private = "file") copying_song: int
 
 worker_start :: proc() {
@@ -120,8 +139,10 @@ worker_main :: proc() {
 		sync.mutex_unlock(&jobs_lock)
 
 		switch j in job {
-		case Open_Pack: do_open_pack(j)
-		case Copy_Song: do_copy_song(j)
+		case Open_Pack:    do_open_pack(j)
+		case Copy_Song:    do_copy_song(j)
+		case Load_Catalog: do_load_catalog(j)
+		case Search_Packs: do_search(j)
 		}
 		free_all(context.temp_allocator)
 	}
@@ -141,6 +162,41 @@ do_open_pack :: proc(job: Open_Pack) {
 	for song, i in pack.songs do rows[i] = {name = strings.clone(song.name), bytes = song.bytes, files = len(song.files)}
 	tell(Pack_Ready{id = pack.id, name = strings.clone(pack.name), rows = rows})
 	say_from_worker(.Good, fmt.tprintf("PACK READ: %d SONGS, %s TO DOWNLOAD IN ALL", len(rows), megabytes(pack.size)), "TAP A SONG TO COPY IT TO THE STICK.")
+}
+
+@(private = "file")
+do_load_catalog :: proc(job: Load_Catalog) {
+	defer delete(job.private_dir)
+	say_from_worker(.Waiting, "GETTING THE SITE'S PACK LIST ...")
+	from_site, problem := load_catalog(&anchors, &catalog, job.private_dir)
+	if problem.what != "" {
+		say_from_worker(.Bad, problem.what, problem.why)
+		return
+	}
+	say_from_worker(.Good, fmt.tprintf("%d PACKS ON THE SITE%s. TYPE TO SEARCH.", len(catalog.packs), "" if from_site else " (LIST FROM TODAY)"))
+}
+
+@(private = "file")
+do_search :: proc(job: Search_Packs) {
+	defer delete(job.query)
+	// Typing sends a search per letter: skip to the newest one waiting, if any.
+	sync.mutex_lock(&jobs_lock)
+	for queued in jobs {
+		if _, is_search := queued.(Search_Packs); is_search {
+			sync.mutex_unlock(&jobs_lock)
+			return
+		}
+	}
+	sync.mutex_unlock(&jobs_lock)
+
+	if job.kind != .Pack_Name && strings.trim_space(job.query) != "" do say_from_worker(.Waiting, fmt.tprintf("SEARCHING %sS FOR \"%s\" ...", SEARCH_KIND_LABEL[job.kind], strings.to_upper(job.query, context.temp_allocator)))
+	rows, problem := search_packs(&anchors, &catalog, job.kind, job.query)
+	tell(Search_Results{stamp = job.stamp, rows = rows})
+	if problem.what != "" {
+		say_from_worker(.Bad, problem.what, problem.why)
+		return
+	}
+	if job.kind != .Pack_Name && strings.trim_space(job.query) != "" do say_from_worker(.Good, fmt.tprintf("%d PACKS FOUND%s.", len(rows), " (THE FIRST 200)" if len(rows) == MAX_RESULTS else ""))
 }
 
 @(private = "file")

@@ -80,6 +80,12 @@ decoded sample up to the stated length is unchanged. Found along the way: a play
 granule may drop that final block of audio (stb_vorbis: 576 samples, 13 ms) at the very end; the cabinet's
 behaviour there is to be seen.
 
+**Finding packs.** The site (github.com/concubidated/simfile-pack-search) has a small JSON API: `/api/packs`
+lists every pack (id, name, song count, size, type, minimum StepMania version; 10,100 packs, 0.8 MB) and
+`/api/search/?type=title|artist|credit&query=...` returns packs with matching songs (about 3 s). The app keeps the
+pack list for a day and searches pack names on the phone; song, artist and author searches go to the site, since
+there is no list of all songs to keep (and one would be far over a few MB).
+
 **Stock cabinet limits** (from players, to be confirmed on the cabinet): about 50 songs per stick,
 audio under 5 MB and in OGG, songs fading out around 105 s. A modded cabinet (Simply Love theme) may lift
 the length limit.

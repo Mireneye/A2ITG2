@@ -1,13 +1,22 @@
 /*
 A2ITG2: copy songs from StepMania packs onto an ITG2 cabinet's USB stick.
 
-The screen, top to bottom:
+The screen, top to bottom (screen.odin draws it):
 	a strip whose colour says how the last step went (blue busy, green done, red failed)
 	the last status lines
+	PACKS | SONGS tabs
+
+	PACKS page: find a pack on the site
+	SEARCH BY row  pack name, song title, artist or chart author; tap to cycle
+	the search text
+	the packs found (the newest packs when nothing is typed); tap one to open it on the SONGS page
+	a keyboard: pack names are searched as you type, the others on SEARCH
+
+	SONGS page: copy songs from the open pack
 	STICK row   the folder songs are copied into; tap to pick another
 	AUDIO row   the most an Ogg may take (MP3s are converted to fit); tap - or + to change it
 	PATCH row   whether Oggs over 1:45 are length patched to read as 1:45; tap to switch
-	PACK row    the pack being browsed; tap to read it again
+	PACK row    the open pack; tap to read it again
 	the pack's songs; tap one to copy it into the stick folder (videos are left out)
 
 Everything slow runs on the worker thread (worker.odin); this loop only draws and handles touches.
@@ -36,8 +45,6 @@ AUDIO_LIMIT_STEP    :: 100_000
 AUDIO_LIMIT_MIN     :: 1_000_000
 AUDIO_LIMIT_MAX     :: 20_000_000
 
-// ZZ-Replace: a fixed pack to browse until picking packs is built (OPS Anime Mix 2, 57.7 MB).
-DEFAULT_PACK_ID :: 10850
 
 STATUS_ROWS :: 4 // the status area keeps its size; older lines scroll off
 
@@ -47,7 +54,16 @@ Screen_Mood :: enum {
 	Bad,
 }
 
+Page :: enum u8 {
+	Packs,
+	Songs,
+}
+
 Tap_Target :: union {
+	Show_Page,
+	Cycle_Search_Kind,
+	Key,
+	Pack_Tap,
 	Change_Folder,
 	Audio_Limit_Down,
 	Audio_Limit_Up,
@@ -55,6 +71,12 @@ Tap_Target :: union {
 	Reload_Pack,
 	Song_Tap,
 }
+Show_Page         :: struct { page: Page }
+Cycle_Search_Kind :: struct {}
+Pack_Tap          :: struct { index: int }
+// A keyboard key: a character, or one of the special keys.
+Key :: struct { char: u8, special: Special_Key }
+Special_Key :: enum u8 { None, Delete, Search }
 Change_Folder    :: struct {}
 Audio_Limit_Down :: struct {}
 Audio_Limit_Up   :: struct {}
@@ -81,13 +103,20 @@ App_State :: struct {
 	picker_open:   bool,
 	listener_set:  bool,
 
-	pack_id:       int,
+	page:          Page,
+	search_kind:   Search_Kind,
+	query:         [dynamic]u8, // upper-case letters, digits and spaces
+	results:       []Pack_Row,
+	results_scroll: int,
+	search_stamp:  int, // the latest search sent; older answers are dropped
+
+	pack_id:       int, // 0: none opened yet
 	pack_name:     string,
 	songs:         []Song_Row,
 	copying:       int, // the song being copied, or -1
 	progress:      Copy_Progress,
 
-	scroll:        int, // pixels the song list is scrolled down
+	scroll:        int, // pixels the song list is scrolled down (results_scroll for the pack list)
 	hits:          [dynamic]Hit,
 	touch_x:       f32,
 	touch_start_y: f32,
@@ -105,14 +134,18 @@ main :: proc() {
 	app.onInputEvent = on_input_event
 
 	state.private_dir = strings.clone_from_cstring(app.activity.internalDataPath)
-	state.pack_id = DEFAULT_PACK_ID
 	state.copying = -1
 	load_settings()
 
 	listen_for_picker_result(app)
 	worker_start()
 	check_saved_folder()
-	worker_ask(Open_Pack{id = state.pack_id})
+	worker_ask(Load_Catalog{private_dir = strings.clone(state.private_dir)})
+	search_now()
+	if state.pack_id > 0 {
+		state.page = .Songs
+		worker_ask(Open_Pack{id = state.pack_id})
+	}
 
 	for app.destroyRequested == 0 {
 		source: ^glue.android_poll_source
@@ -179,14 +212,19 @@ handle_worker_messages :: proc() {
 			delete(m.lines[0])
 			delete(m.lines[1])
 		case Pack_Ready:
-			for row in state.songs do delete(row.name)
-			delete(state.songs)
-			delete(state.pack_name)
+			free_song_rows()
 			state.pack_id, state.pack_name, state.songs = m.id, m.name, m.rows
 			state.scroll = 0
 		case Copy_Progress:
 			state.progress = m
 			state.copying = -1 if m.finished else m.song
+		case Search_Results:
+			if m.stamp != state.search_stamp {
+				free_pack_rows(m.rows) // an answer to an older search
+				continue
+			}
+			free_pack_rows(state.results)
+			state.results, state.results_scroll = m.rows, 0
 		}
 	}
 	draw(glue.app())
@@ -197,6 +235,25 @@ on_tap :: proc(app: ^glue.android_app, x, y: int) {
 		if y < hit.top || y >= hit.bottom do continue
 		if hit.right > 0 && (x < hit.left || x >= hit.right) do continue
 		switch target in hit.target {
+		case Show_Page:
+			state.page = target.page
+		case Cycle_Search_Kind:
+			state.search_kind = Search_Kind((int(state.search_kind) + 1) % len(Search_Kind))
+			if state.search_kind == .Pack_Name do search_now()
+		case Key:
+			type_key(target)
+		case Pack_Tap:
+			if state.copying >= 0 {
+				say(.Waiting, "WAIT FOR THE COPY TO FINISH BEFORE OPENING ANOTHER PACK.")
+				return
+			}
+			row := state.results[target.index]
+			state.pack_id = row.id
+			save_settings()
+			free_song_rows()
+			state.pack_name = strings.clone(row.name)
+			state.page = .Songs
+			worker_ask(Open_Pack{id = row.id})
 		case Audio_Limit_Down:
 			set_audio_limit(state.audio_limit - AUDIO_LIMIT_STEP)
 		case Audio_Limit_Up:
@@ -233,6 +290,41 @@ on_tap :: proc(app: ^glue.android_app, x, y: int) {
 	}
 }
 
+// Pack names are searched as you type; the other searches ask the site, so they wait for SEARCH.
+type_key :: proc(key: Key) {
+	MAX_QUERY :: 40
+	switch key.special {
+	case .None:
+		if len(state.query) < MAX_QUERY do append(&state.query, key.char)
+		if state.search_kind == .Pack_Name do search_now()
+	case .Delete:
+		if len(state.query) > 0 do pop(&state.query)
+		if state.search_kind == .Pack_Name do search_now()
+	case .Search:
+		search_now()
+	}
+}
+
+search_now :: proc() {
+	state.search_stamp += 1
+	worker_ask(Search_Packs{kind = state.search_kind, query = strings.clone(string(state.query[:])), stamp = state.search_stamp})
+}
+
+free_pack_rows :: proc(rows: []Pack_Row) {
+	for row in rows {
+		delete(row.name)
+		delete(row.matched)
+	}
+	delete(rows)
+}
+
+free_song_rows :: proc() {
+	for row in state.songs do delete(row.name)
+	delete(state.songs)
+	delete(state.pack_name)
+	state.songs, state.pack_name = nil, ""
+}
+
 set_audio_limit :: proc(bytes: int) {
 	state.audio_limit = clamp(bytes, AUDIO_LIMIT_MIN, AUDIO_LIMIT_MAX)
 	save_settings()
@@ -246,10 +338,11 @@ Setting :: struct {
 	min, max: int,
 }
 
-settings_table :: proc() -> [2]Setting {
+settings_table :: proc() -> [3]Setting {
 	return {
 		{key = "audio_limit_bytes", value = &state.audio_limit,  default = DEFAULT_AUDIO_LIMIT, min = AUDIO_LIMIT_MIN, max = AUDIO_LIMIT_MAX},
 		{key = "length_patch",      value = &state.length_patch, default = 1,                   min = 0,               max = 1},
+		{key = "pack_id",           value = &state.pack_id,      default = 0,                   min = 0,               max = max(int)},
 	}
 }
 
@@ -321,7 +414,8 @@ on_input_event :: proc(app: ^glue.android_app, event: ^android.AInputEvent) -> i
 	case .MOVE:
 		if abs(y - state.touch_start_y) > drag_threshold do state.dragging = true
 		if state.dragging {
-			state.scroll -= int(y - state.touch_last_y)
+			list_scroll := &state.scroll if state.page == .Songs else &state.results_scroll
+			list_scroll^ -= int(y - state.touch_last_y)
 			state.touch_last_y = y
 			draw(app)
 		}

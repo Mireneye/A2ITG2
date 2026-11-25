@@ -3,8 +3,9 @@
 An Android app that takes songs from StepMania pack sites onto an ITG2 arcade cabinet's USB stick,
 through the phone's USB OTG port. Written in Odin; a functional app, not a pretty one.
 
-**Status: copying songs, MP3s converted, length patch.** The app reads a pack's table of contents over HTTPS (a few small
-byte ranges, not the whole pack), lists its songs, and copies a tapped song onto the stick: its `.sm` chart and
+**Status: finding packs, copying songs, MP3s converted, length patch.** The PACKS page searches the site by pack
+name (on the phone, as you type), song title, artist or chart author. The SONGS page reads the chosen pack's table of
+contents over HTTPS (a few small byte ranges, not the whole pack), lists its songs, and copies a tapped song onto the stick: its `.sm` chart and
 the files the chart names, without videos. MP3 audio is converted to Ogg Vorbis within the audio limit, with
 the sync kept to the sample, and the chart's `#MUSIC` is pointed at the new file. With the length patch on,
 Oggs over 1:45 are patched so the cabinet reads them as 1:45 (r21 cabinets then play them through).
@@ -38,17 +39,21 @@ Then:
 
 ## Using it
 
-1. Plug the stick into the phone and open A2ITG2.
-2. Tap the **STICK** row and pick the folder songs should go in: on a stick the cabinet has used, its
-   "In The Groove 2" folder's Songs folder. The app remembers it.
-3. **AUDIO LIMIT** is the most a song's Ogg may take; tap - or + to change it (0.1 MB steps). MP3s are
-   converted to the best quality that fits.
-4. **LENGTH PATCH** (on by default): songs over 1:45 get the Ogg length patch, so an r21 cabinet reads them
-   as 1:45 and plays all of them. Tap to switch it off. (r23 cabinets cut custom songs at 2:00 regardless.)
-5. The pack (for now always #10850, a small test pack) is read on start; its songs appear below.
-   Tap **PACK** to read it again.
-6. Tap a song. Its row fills as it copies: by files, then by percent while an MP3 becomes an Ogg (`CONVERTING 37%`;
-   `SMALLER .. (TRY 2)` if the first try came out over the limit). The
-   top strip turns green with `SAFE TO UNPLUG`.
+**PACKS page**: find a pack.
+1. With nothing typed, the newest packs on the site are listed.
+2. **SEARCH BY** (tap to cycle): pack name, song title, artist, chart author. Pack names are searched as you type;
+   the others ask the site when you tap **SEARCH** (about 3 seconds). Results show each pack's size; `SM5` marks
+   packs made for StepMania 5, whose charts may be `.ssc` only (ITG2 reads `.sm`).
+3. Tap a pack to open it on the SONGS page. The app remembers it.
+
+**SONGS page**: copy songs.
+1. Plug the stick into the phone. Tap **STICK** and pick the folder songs should go in: on a stick the cabinet has
+   used, its "In The Groove 2" folder's Songs folder. The app remembers it.
+2. **AUDIO LIMIT** is the most a song's Ogg may take; tap - or + (0.1 MB steps). MP3s are converted to the best
+   quality that fits.
+3. **LENGTH PATCH** (on by default): songs over 1:45 get the Ogg length patch, so an r21 cabinet reads them as 1:45
+   and plays all of them. Tap to switch it off. (r23 cabinets cut custom songs at 2:00 regardless.)
+4. Tap a song. Its row fills as it copies: by files, then by percent while an MP3 becomes an Ogg (`CONVERTING 37%`;
+   `SMALLER .. (TRY 2)` if the first try came out over the limit). The top strip turns green with `SAFE TO UNPLUG`.
 
 Blue strip: working. Green: done. Red: a step failed, and the text says which and why.
