@@ -441,8 +441,8 @@ draw_two_lines :: proc(l: Layout, top: int, first, second: string, first_color, 
 
 // A song row's details from its chart, "N1 S4 M8 H11 E13  2:05  148", made to fit `columns`: first the
 // novice chart goes, then the wide gaps, then the tempo. The harder difficulties always stay.
-// Letters by the cabinet's names, each different: Novice (the file's Beginner), Simple (easy), Medium,
-// Hard, Expert (the file's Challenge).
+// Letters after the cabinet's names, Novice (the file's Beginner), Easy, Medium, Hard, Expert (the file's
+// Challenge), except Easy: S (for simple), so it doesn't clash with Expert's E.
 @(private = "file")
 info_text :: proc(info: Song_Info_Text, columns: int) -> string {
 	if info.state == .No_Sm do return "NO .SM: ITG2 CAN'T USE IT"
