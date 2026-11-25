@@ -64,11 +64,24 @@ jobs:
             echo "SIGNED=throwaway" >> "$GITHUB_ENV"
           fi
 
-      - name: Tests (zip reader, TLS)
+      - name: Audio libraries (libmad, libogg, libvorbis)
         run: |
+          TOOLS="$ODIN_ANDROID_NDK/toolchains/llvm/prebuilt/linux-x86_64/bin"
+          tools/build_audio_libs.sh libs/android_arm64 "$TOOLS/clang --target=aarch64-linux-android$MIN_ANDROID" "$TOOLS/llvm-ar"
+          tools/build_audio_libs.sh libs/linux_amd64 clang
+
+      - name: Tests (zip reader, TLS, audio sync and size)
+        run: |
+          sudo apt-get install -y -q lame > /dev/null
+          # Odin's stb_vorbis plays the converted Oggs back in the audio tests.
+          mkdir -p ~/odin/vendor/stb/lib
+          cc -c -O2 -fPIC ~/odin/vendor/stb/src/stb_vorbis.c -o /tmp/stb_vorbis.o
+          ar rcs ~/odin/vendor/stb/lib/stb_vorbis.a /tmp/stb_vorbis.o
           python3 tools/make_zip_fixtures.py
+          python3 tools/make_audio_fixtures.py
           ~/odin/odin test src/zip
           ~/odin/odin test src/tls
+          ~/odin/odin test src/audio
 
       - name: Build APK
         run: |

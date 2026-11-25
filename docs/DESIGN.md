@@ -62,6 +62,14 @@ picking that Songs folder puts songs where the cabinet looks.
 every custom song at 120 seconds whether or not the .ogg is patched, so the .ogg length patch only helps
 on r21 cabinets.
 
+**Conversion as built.** libmad 0.15.1b from StepMania's own tree, built with FPM_64BIT as StepMania does on
+Linux/macOS (plain C arithmetic, so the phone and the test machine decode alike). The decoding loop is a port
+of StepMania's, rules above included. Every decoded sample goes to libvorbis (StepMania's pinned commit) at an
+average bitrate worked out from the limit and the song's length; if the file comes out over, the bitrate drops by
+the overshoot and it is encoded again. Tests on click tracks (CBR with an Info frame, VBR with a Xing frame, no
+frame) check the clicks land 1105 or 2257 samples late as StepMania plays them, and on the same sample in the Ogg,
+with the same sample count. Below about 45 kbps libvorbis can't go: at the 4.8 MB default that is a 14-minute song.
+
 **Stock cabinet limits** (from players, to be confirmed on the cabinet): about 50 songs per stick,
 audio under 5 MB and in OGG, songs fading out around 105 s. A modded cabinet (Simply Love theme) may lift
 the length limit.

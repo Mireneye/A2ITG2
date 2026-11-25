@@ -11,14 +11,17 @@
 | `src/text.odin` | Pixel drawing and a 5x7 bitmap font (ZZ-Replace: stand-in UI) |
 | `src/web/` | HTTPS GET of a byte range, over `src/tls` |
 | `src/zip/` | Reading a zip a few byte ranges at a time, ZIP64 included; `zip_test.odin` tests it |
+| `src/audio/` | MP3 to Ogg: `mp3_decode.odin` (StepMania's MP3 reading, ported), `convert.odin` (Vorbis encoding to a size limit), `libraries.odin` (C bindings); tests check sync to the sample |
 | `src/tls/` | TLS 1.3/1.2 client, copied from Weaving Mirage (see `docs/VENDORED.md`) |
 | `src/inflate/` | Deflate decoder, copied from Folding Mirage (see `docs/VENDORED.md`) |
 | `app/AndroidManifest.xml` | The app's package name, its activity (`OdinActivity`), library name (`a2itg2`), internet permission |
 | `app/res/` | Resources: the app's name |
 | `.github/workflows/build.yml` | GitHub runs the tests, builds the APK on every push and publishes it as the "latest" release |
 | `build.bat` | Building on a PC instead (optional); `install` also puts it on the phone |
+| `tools/build_audio_libs.sh` | Fetches libmad (StepMania's copy), libogg and libvorbis at pinned commits and builds `libs/<target>/libaudio.a` |
+| `tools/make_audio_fixtures.py` | Makes the click-track and dense test MP3s for `src/audio` (needs `lame`) |
 | `tools/make_zip_fixtures.py` | Makes the test zips for `src/zip` (into the git-ignored `tests/fixtures/`) |
 | `docs/DESIGN.md` | What the app is meant to become, and the findings behind it |
 | `docs/VENDORED.md` | Where the copied code came from, and the changes made to it |
 
-The build writes `app/lib/arm64-v8a/liba2itg2.so` and `build/a2itg2.apk`; both are git-ignored.
+The build writes `app/lib/arm64-v8a/liba2itg2.so`, `build/a2itg2.apk`, `libs/` and `third_party/`; all git-ignored.

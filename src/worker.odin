@@ -23,8 +23,9 @@ Open_Pack :: struct {
 }
 
 Copy_Song :: struct {
-	index: int,
-	tree:  string, // the picked folder's address (heap; the worker frees it)
+	index:       int,
+	tree:        string, // the picked folder's address (heap; the worker frees it)
+	audio_limit: int,    // bytes an Ogg may take
 }
 
 Job :: union {
@@ -52,6 +53,7 @@ Pack_Ready :: struct {
 
 Copy_Progress :: struct {
 	song:        int,
+	step:        Copy_Step,
 	done, total: int,
 	finished:    bool,
 }
@@ -158,8 +160,8 @@ do_copy_song :: proc(job: Copy_Song) {
 	defer delete(destination.document_id)
 
 	copying_song = job.index
-	notes, copy_problem := copy_song(&anchors, &pack, job.index, destination, proc(done, total: int, name: string) {
-		tell(Copy_Progress{song = copying_song, done = done, total = total})
+	notes, copy_problem := copy_song(&anchors, &pack, job.index, destination, job.audio_limit, proc(step: Copy_Step, done, total: int) {
+		tell(Copy_Progress{song = copying_song, step = step, done = done, total = total})
 	})
 	tell(Copy_Progress{song = job.index, finished = true})
 	if copy_problem.what != "" {
@@ -169,8 +171,10 @@ do_copy_song :: proc(job: Copy_Song) {
 	done_line := fmt.tprintf("COPIED %s (%d FILES). SAFE TO UNPLUG THE STICK.", song.name, notes.files)
 	if notes.videos_left_out > 0 do done_line = fmt.tprintf("%s %d VIDEO(S) LEFT OUT.", done_line, notes.videos_left_out)
 	switch {
-	case notes.audio_is_mp3:
-		say_from_worker(.Good, done_line, "ITS AUDIO IS MP3: THE CABINET NEEDS OGG (CONVERSION COMES IN A LATER STEP).")
+	case notes.converted:
+		say_from_worker(.Good, done_line, fmt.tprintf("MP3 CONVERTED TO OGG: %s AT %d KBPS.", megabytes(i64(notes.ogg_bytes)), notes.ogg_bitrate / 1000))
+	case notes.audio_over_limit:
+		say_from_worker(.Good, done_line, "ITS OGG IS OVER THE AUDIO LIMIT (SHRINKING OGGS COMES LATER).")
 	case notes.missing > 0:
 		say_from_worker(.Good, done_line, fmt.tprintf("%d PICTURE(S) THE CHART NAMES WERE NOT IN THE PACK.", notes.missing))
 	case:
@@ -178,6 +182,13 @@ do_copy_song :: proc(job: Copy_Song) {
 	}
 }
 
+// Sizes are shown in decimal megabytes (1 MB = 1,000,000 bytes) everywhere, the audio limit included.
+BYTES_PER_MB :: 1_000_000
+
 megabytes :: proc(bytes: i64) -> string {
-	return fmt.tprintf("%.1f MB", f64(bytes) / (1024 * 1024))
+	return fmt.tprintf("%.1f MB", f64(bytes) / BYTES_PER_MB)
+}
+
+megabytes_decimal :: proc(bytes: int) -> string {
+	return megabytes(i64(bytes))
 }

@@ -50,7 +50,8 @@ draw :: proc(app: ^glue.android_app) {
 	status_top := strip_height + 2 * scale
 	status_height := STATUS_ROWS * CELL_HEIGHT * scale
 	folder_top := status_top + status_height + 2 * scale
-	pack_top := folder_top + row
+	limit_top := folder_top + row
+	pack_top := limit_top + row
 	list_top := pack_top + row + scale
 
 	// The song list first, so the rows above cover any part scrolled under them.
@@ -64,7 +65,10 @@ draw :: proc(app: ^glue.android_app) {
 		fill_rect(canvas, 0, top, canvas.width, row, background)
 
 		right := megabytes(song.bytes)
-		if i == state.copying do right = fmt.tprintf("%d/%d FILES", state.progress.done, state.progress.total)
+		if i == state.copying {
+			right = fmt.tprintf("%d/%d FILES", state.progress.done, state.progress.total)
+			if state.progress.step == .Converting do right = "CONVERTING"
+		}
 		draw_row_text(canvas, strings.to_upper(song.name, context.temp_allocator), right, top, row, scale, columns, COLOR_TEXT)
 		visible_top := max(top, list_top)
 		append(&state.hits, Hit{top = visible_top, bottom = top + row, target = Song_Tap{index = i}})
@@ -82,6 +86,19 @@ draw :: proc(app: ^glue.android_app) {
 	folder_text := fmt.tprintf("STICK: %s", folder_label(state.folder) if state.folder_ok else "NOT PICKED")
 	draw_row_text(canvas, folder_text, "CHANGE", folder_top, row - scale, scale, columns, COLOR_TEXT)
 	append(&state.hits, Hit{top = folder_top, bottom = folder_top + row, target = Change_Folder{}})
+
+	// The audio limit: "-" and "+" buttons at the right end, each a quarter of the width.
+	fill_rect(canvas, 0, limit_top, canvas.width, row - scale, COLOR_HEADER)
+	button_width := canvas.width / 4
+	minus_left, plus_left := canvas.width - 2 * button_width, canvas.width - button_width
+	fill_rect(canvas, minus_left + scale, limit_top + scale, button_width - 2 * scale, row - 3 * scale, COLOR_ACTIVE)
+	fill_rect(canvas, plus_left + scale, limit_top + scale, button_width - 2 * scale, row - 3 * scale, COLOR_ACTIVE)
+	label_y := limit_top + (row - scale - GLYPH_HEIGHT * scale) / 2
+	draw_text(canvas, fmt.tprintf("AUDIO LIMIT: %s", megabytes_decimal(state.audio_limit)), MARGIN_CELLS * CELL_WIDTH * scale, label_y, scale)
+	draw_text(canvas, "-", minus_left + (button_width - GLYPH_WIDTH * scale) / 2, label_y, scale)
+	draw_text(canvas, "+", plus_left + (button_width - GLYPH_WIDTH * scale) / 2, label_y, scale)
+	append(&state.hits, Hit{top = limit_top, bottom = limit_top + row, left = minus_left, right = plus_left, target = Audio_Limit_Down{}})
+	append(&state.hits, Hit{top = limit_top, bottom = limit_top + row, left = plus_left, right = canvas.width, target = Audio_Limit_Up{}})
 
 	fill_rect(canvas, 0, pack_top, canvas.width, row - scale, COLOR_HEADER)
 	pack_text := fmt.tprintf("PACK #%d: %s", state.pack_id, strings.to_upper(state.pack_name, context.temp_allocator))

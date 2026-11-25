@@ -10,6 +10,7 @@ import "core:fmt"
 import "core:slice"
 import "core:strings"
 import "tls"
+import "audio"
 import "web"
 import "zip"
 
@@ -139,8 +140,12 @@ find_songs :: proc(pack: ^Pack) {
 // Copies song `index` into a new folder of its name inside `destination`: the song's .sm chart and
 // the files it names (#MUSIC, #BANNER, #BACKGROUND, #CDTITLE, #LYRICSPATH). That leaves out videos,
 // other chart formats and leftovers (".old" files) without guessing from names. A folder without
-// an .sm (ITG2 reads no other format) copies nothing. `progress` hears about each file first.
-copy_song :: proc(anchors: ^tls.Trust_Anchors, pack: ^Pack, index: int, destination: Folder_Ref, progress: proc(done, total: int, name: string)) -> (notes: Copy_Notes, problem: Pack_Problem) {
+// an .sm (ITG2 reads no other format) copies nothing.
+//
+// MP3 audio is converted to Ogg Vorbis within `audio_limit` bytes (src/audio: sample-exact, so the
+// chart's sync holds) and the chart's #MUSIC is rewritten to the new name. The chart is written last:
+// a song folder is complete once its chart is there.
+copy_song :: proc(anchors: ^tls.Trust_Anchors, pack: ^Pack, index: int, destination: Folder_Ref, audio_limit: int, progress: proc(step: Copy_Step, done, total: int)) -> (notes: Copy_Notes, problem: Pack_Problem) {
 	song := pack.songs[index]
 
 	chart := -1
@@ -155,11 +160,12 @@ copy_song :: proc(anchors: ^tls.Trust_Anchors, pack: ^Pack, index: int, destinat
 	chart_bytes, chart_problem := fetch_entry(anchors, pack, chart)
 	if chart_problem.what != "" do return notes, chart_problem
 	defer delete(chart_bytes)
+	chart_text := string(chart_bytes)
 
-	// The chart first, then each file it names that is in the song's folder.
+	// Each file the chart names that is in the song's folder.
 	wanted := make([dynamic]int, context.temp_allocator)
-	append(&wanted, chart)
-	for reference in chart_references(string(chart_bytes)) {
+	music := -1
+	for reference in chart_references(chart_text) {
 		if reference.name == "" do continue
 		if slice.contains(SKIPPED_EXTENSIONS[:], strings.to_lower(extension_of(reference.name), context.temp_allocator)) {
 			notes.videos_left_out += 1 // a banner or background movie: the cabinet does fine without
@@ -171,9 +177,10 @@ copy_song :: proc(anchors: ^tls.Trust_Anchors, pack: ^Pack, index: int, destinat
 			notes.missing += 1 // a missing picture only costs the picture
 			continue
 		}
-		if !slice.contains(wanted[:], found) do append(&wanted, found)
-		if reference.tag == "MUSIC" do notes.audio_is_mp3 = strings.to_lower(extension_of(reference.name), context.temp_allocator) == ".mp3"
+		if reference.tag == "MUSIC" do music = found
+		if found != chart && !slice.contains(wanted[:], found) do append(&wanted, found)
 	}
+	total := len(wanted) + 1 // and the chart
 
 	folder, folder_problem := create_folder(destination, song.name)
 	if folder_problem != "" do return notes, {"COULD NOT MAKE THE SONG'S FOLDER", folder_problem}
@@ -182,31 +189,92 @@ copy_song :: proc(anchors: ^tls.Trust_Anchors, pack: ^Pack, index: int, destinat
 	for entry_index, done in wanted {
 		entry := pack.entries[entry_index]
 		file_name := last_part(entry.name)
-		progress(done, len(wanted), file_name)
+		progress(.Fetching, done, total)
+		data, fetch_problem := fetch_entry(anchors, pack, entry_index)
+		if fetch_problem.what != "" do return notes, fetch_problem
+		defer delete(data)
 
-		data: []u8
-		if entry_index == chart {
-			data = chart_bytes
-		} else {
-			fetch_problem: Pack_Problem
-			data, fetch_problem = fetch_entry(anchors, pack, entry_index)
-			if fetch_problem.what != "" do return notes, fetch_problem
+		if entry_index == music && strings.to_lower(extension_of(file_name), context.temp_allocator) == ".mp3" {
+			progress(.Converting, done, total)
+			conversion, convert_problem := audio.mp3_to_ogg(data, audio_limit)
+			if convert_problem != .None do return notes, convert_problem_text(convert_problem, audio_limit)
+			defer delete(conversion.ogg)
+			ogg_name := ogg_name_for(pack, song, file_name)
+			if write_problem := write_file(folder, ogg_name, conversion.ogg, "audio/ogg"); write_problem != "" {
+				return notes, {fmt.tprintf("COULD NOT WRITE %s", strings.to_upper(ogg_name, context.temp_allocator)), write_problem}
+			}
+			chart_text = replace_tag_value(chart_text, "MUSIC", ogg_name)
+			notes.converted = true
+			notes.ogg_bytes = len(conversion.ogg)
+			notes.ogg_bitrate = conversion.bitrate
+			notes.files += 1
+			continue
 		}
-		write_problem := write_file(folder, file_name, data)
-		if entry_index != chart do delete(data)
-		if write_problem != "" do return notes, {fmt.tprintf("COULD NOT WRITE %s", strings.to_upper(file_name, context.temp_allocator)), write_problem}
+		if entry_index == music && len(data) > audio_limit do notes.audio_over_limit = true
+
+		if write_problem := write_file(folder, file_name, data); write_problem != "" {
+			return notes, {fmt.tprintf("COULD NOT WRITE %s", strings.to_upper(file_name, context.temp_allocator)), write_problem}
+		}
 		notes.files += 1
 	}
-	progress(len(wanted), len(wanted), "")
+
+	progress(.Fetching, total - 1, total)
+	chart_name := last_part(pack.entries[chart].name)
+	if write_problem := write_file(folder, chart_name, transmute([]u8)chart_text); write_problem != "" {
+		return notes, {fmt.tprintf("COULD NOT WRITE %s", strings.to_upper(chart_name, context.temp_allocator)), write_problem}
+	}
+	notes.files += 1
+	progress(.Fetching, total, total)
 	return notes, {}
+}
+
+Copy_Step :: enum u8 {
+	Fetching,
+	Converting,
 }
 
 // What a copy found worth telling.
 Copy_Notes :: struct {
-	files:           int,
-	missing:         int,  // pictures the chart names that aren't in the folder
-	videos_left_out: int,  // banner or background movies the chart names
-	audio_is_mp3:    bool, // the cabinet needs OGG: conversion comes in a later step
+	files:            int,
+	missing:          int,  // pictures the chart names that aren't in the folder
+	videos_left_out:  int,  // banner or background movies the chart names
+	converted:        bool, // the MP3 became an Ogg
+	ogg_bytes:        int,
+	ogg_bitrate:      int,
+	audio_over_limit: bool, // an Ogg already, but bigger than the limit (re-encoding Oggs comes later)
+}
+
+@(private = "file")
+convert_problem_text :: proc(problem: audio.Convert_Problem, limit: int) -> Pack_Problem {
+	switch problem {
+	case .None:            return {}
+	case .Not_Mp3:         return {"THE AUDIO ISN'T A READABLE MP3", ""}
+	case .Decode_Error:    return {"THE MP3 IS DAMAGED PART-WAY", "IT DECODES ONLY IN PART"}
+	case .Too_Long:        return {"THE SONG IS TOO LONG FOR THE AUDIO LIMIT", fmt.tprintf("RAISE THE LIMIT ABOVE %s", megabytes_decimal(limit))}
+	case .Encoder_Refused: return {"THE OGG ENCODER REFUSED THIS AUDIO", "ODD SAMPLE RATE OR CHANNEL COUNT?"}
+	}
+	return {}
+}
+
+// The converted file's name: the MP3's with .ogg, unless the song folder already has a file by that name.
+@(private = "file")
+ogg_name_for :: proc(pack: ^Pack, song: Song, mp3_name: string) -> string {
+	stem := mp3_name[:len(mp3_name) - len(extension_of(mp3_name))]
+	name := fmt.tprintf("%s.ogg", stem)
+	if find_in_song(pack, song, name) >= 0 do name = fmt.tprintf("%s (a2itg2).ogg", stem)
+	return name
+}
+
+// The chart with `#TAG:value;` given a new value (the first one; tags in any letter case).
+replace_tag_value :: proc(chart, tag, value: string) -> string {
+	upper := strings.to_upper(chart, context.temp_allocator)
+	marker := fmt.tprintf("#%s:", tag)
+	at := strings.index(upper, marker)
+	if at < 0 do return chart
+	start := at + len(marker)
+	end := strings.index_byte(chart[start:], ';')
+	if end < 0 do return chart
+	return strings.concatenate({chart[:start], value, chart[start + end:]}, context.temp_allocator)
 }
 
 Chart_Reference :: struct {

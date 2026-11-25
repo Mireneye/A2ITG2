@@ -25,6 +25,11 @@ if not exist "%USERPROFILE%\.android\debug.keystore" (
 	keytool -genkeypair -keystore "%USERPROFILE%\.android\debug.keystore" -storepass android -alias androiddebugkey -keypass android -keyalg RSA -keysize 2048 -validity 10000 -dname "CN=Android Debug,O=Android,C=US" || exit /b 1
 )
 
+if not exist libs\android_arm64\libaudio.a (
+	echo libs\android_arm64\libaudio.a is missing: build it once with tools/build_audio_libs.sh ^(in Git Bash, with the NDK's clang^). See README.md.
+	exit /b 1
+)
+
 if not exist %ABI_DIR% mkdir %ABI_DIR%
 if not exist build mkdir build
 

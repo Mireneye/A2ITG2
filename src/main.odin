@@ -5,6 +5,7 @@ The screen, top to bottom:
 	a strip whose colour says how the last step went (blue busy, green done, red failed)
 	the last status lines
 	STICK row   the folder songs are copied into; tap to pick another
+	AUDIO row   the most an Ogg may take (MP3s are converted to fit); tap - or + to change it
 	PACK row    the pack being browsed; tap to read it again
 	the pack's songs; tap one to copy it into the stick folder (videos are left out)
 
@@ -16,14 +17,23 @@ package a2itg2
 import "core:fmt"
 import "core:log"
 import "core:os"
+import "core:strconv"
 import "core:strings"
 import "core:sys/android"
 import glue "core:sys/android/native_app_glue"
 
 LOG_TAG :: "A2ITG2"
 
-// The app's own private folder holds the picked folder's address between runs.
+// The app's own private folder holds the picked folder's address and the settings between runs.
 SAVED_FOLDER_FILE :: "picked_folder.txt"
+SETTINGS_FILE     :: "settings.txt"
+
+// The audio limit, in bytes (decimal MB on screen). Players report the stock cabinet takes audio
+// under 5 MB, so the default stays a little under. ZZ-Attention: confirm on the cabinet.
+DEFAULT_AUDIO_LIMIT :: 4_800_000
+AUDIO_LIMIT_STEP    :: 100_000
+AUDIO_LIMIT_MIN     :: 1_000_000
+AUDIO_LIMIT_MAX     :: 20_000_000
 
 // ZZ-Replace: a fixed pack to browse until picking packs is built (OPS Anime Mix 2, 57.7 MB).
 DEFAULT_PACK_ID :: 10850
@@ -38,15 +48,21 @@ Screen_Mood :: enum {
 
 Tap_Target :: union {
 	Change_Folder,
+	Audio_Limit_Down,
+	Audio_Limit_Up,
 	Reload_Pack,
 	Song_Tap,
 }
-Change_Folder :: struct {}
-Reload_Pack   :: struct {}
-Song_Tap      :: struct { index: int }
+Change_Folder    :: struct {}
+Audio_Limit_Down :: struct {}
+Audio_Limit_Up   :: struct {}
+Reload_Pack      :: struct {}
+Song_Tap         :: struct { index: int }
 
+// A tap target's area. left/right 0/0 means the whole width.
 Hit :: struct {
 	top, bottom: int,
+	left, right: int,
 	target:      Tap_Target,
 }
 
@@ -57,6 +73,7 @@ App_State :: struct {
 	private_dir:   string,
 	folder:        string, // the picked folder's address ("" until picked)
 	folder_ok:     bool,
+	audio_limit:   int, // bytes
 	picker_open:   bool,
 	listener_set:  bool,
 
@@ -68,6 +85,7 @@ App_State :: struct {
 
 	scroll:        int, // pixels the song list is scrolled down
 	hits:          [dynamic]Hit,
+	touch_x:       f32,
 	touch_start_y: f32,
 	touch_last_y:  f32,
 	dragging:      bool,
@@ -85,6 +103,7 @@ main :: proc() {
 	state.private_dir = strings.clone_from_cstring(app.activity.internalDataPath)
 	state.pack_id = DEFAULT_PACK_ID
 	state.copying = -1
+	load_settings()
 
 	listen_for_picker_result(app)
 	worker_start()
@@ -169,10 +188,15 @@ handle_worker_messages :: proc() {
 	draw(glue.app())
 }
 
-on_tap :: proc(app: ^glue.android_app, y: int) {
+on_tap :: proc(app: ^glue.android_app, x, y: int) {
 	for hit in state.hits {
 		if y < hit.top || y >= hit.bottom do continue
+		if hit.right > 0 && (x < hit.left || x >= hit.right) do continue
 		switch target in hit.target {
+		case Audio_Limit_Down:
+			set_audio_limit(state.audio_limit - AUDIO_LIMIT_STEP)
+		case Audio_Limit_Up:
+			set_audio_limit(state.audio_limit + AUDIO_LIMIT_STEP)
 		case Change_Folder:
 			if state.picker_open do return
 			if err := open_folder_picker(app); err != "" {
@@ -193,11 +217,37 @@ on_tap :: proc(app: ^glue.android_app, y: int) {
 			case:
 				state.copying = target.index
 				state.progress = {song = target.index}
-				worker_ask(Copy_Song{index = target.index, tree = strings.clone(state.folder)})
+				worker_ask(Copy_Song{index = target.index, tree = strings.clone(state.folder), audio_limit = state.audio_limit})
 			}
 		}
 		draw(app)
 		return
+	}
+}
+
+set_audio_limit :: proc(bytes: int) {
+	state.audio_limit = clamp(bytes, AUDIO_LIMIT_MIN, AUDIO_LIMIT_MAX)
+	save_settings()
+}
+
+// settings.txt: one "name=value" per line.
+load_settings :: proc() {
+	state.audio_limit = DEFAULT_AUDIO_LIMIT
+	text, err := os.read_entire_file(fmt.tprintf("%s/%s", state.private_dir, SETTINGS_FILE), context.temp_allocator)
+	if err != nil do return
+	lines := string(text)
+	for line in strings.split_lines_iterator(&lines) {
+		name, _, value := strings.partition(strings.trim_space(line), "=")
+		if name == "audio_limit_bytes" {
+			if bytes, ok := strconv.parse_int(value); ok do state.audio_limit = clamp(bytes, AUDIO_LIMIT_MIN, AUDIO_LIMIT_MAX)
+		}
+	}
+}
+
+save_settings :: proc() {
+	text := fmt.tprintf("audio_limit_bytes=%d\n", state.audio_limit)
+	if err := os.write_entire_file(fmt.tprintf("%s/%s", state.private_dir, SETTINGS_FILE), transmute([]u8)text); err != nil {
+		say(.Bad, "COULD NOT SAVE THE SETTINGS.")
 	}
 }
 
@@ -241,6 +291,7 @@ on_input_event :: proc(app: ^glue.android_app, event: ^android.AInputEvent) -> i
 
 	#partial switch android.AMotionEvent_getAction(event).action {
 	case .DOWN:
+		state.touch_x = android.AMotionEvent_getX(event, 0)
 		state.touch_start_y, state.touch_last_y, state.dragging = y, y, false
 	case .MOVE:
 		if abs(y - state.touch_start_y) > drag_threshold do state.dragging = true
@@ -250,7 +301,7 @@ on_input_event :: proc(app: ^glue.android_app, event: ^android.AInputEvent) -> i
 			draw(app)
 		}
 	case .UP:
-		if !state.dragging do on_tap(app, int(y))
+		if !state.dragging do on_tap(app, int(state.touch_x), int(y))
 	}
 	return 1
 }
