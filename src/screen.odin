@@ -302,8 +302,9 @@ draw_sync_page :: proc(l: Layout) {
 	draw_line(l, header_top, row - scale, fmt.tprintf("%d SONGS  TAP TO RELOAD", len(state.stick_rows)), COLOR_TEXT)
 	append(&state.hits, Hit{top = header_top, bottom = header_top + row, target = Reload_Stick{}})
 
-	// The metronome: its volume with - and +, and ON/OFF.
-	button_width := canvas.width / 5
+	// The metronome: its volume with - and +, and ON/OFF. Three buttons a sixth wide each leave the
+	// label 13 letters ("CLICKS 200%" is 11).
+	button_width := canvas.width / 6
 	fill_rect(canvas, 0, clicks_top, canvas.width, row - scale, COLOR_HEADER)
 	draw_line(l, clicks_top, row - scale, fmt.tprintf("CLICKS %d%%", state.click_volume), COLOR_TEXT)
 	draw_small_button(l, canvas.width - 3 * button_width, clicks_top, button_width, "-", true, Click_Volume{up = false})
