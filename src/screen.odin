@@ -68,6 +68,10 @@ Layout :: struct {
 
 SYNC_FOLD_LINES :: 3
 
+// Setting rows' buttons, as parts of the screen's width: - and + slim, ON/OFF wide enough for "OFF".
+STEP_BUTTON_PARTS   :: 15
+SWITCH_BUTTON_PARTS :: 6
+
 @(private = "file") geometry_window: ^android.ANativeWindow // the window the buffer format was set for
 
 draw :: proc(app: ^glue.android_app) {
@@ -235,16 +239,18 @@ draw_songs_page :: proc(l: Layout) {
 
 	// The audio limit, with - and + buttons at the right.
 	fill_rect(canvas, 0, limit_top, canvas.width, row - scale, COLOR_HEADER)
-	button_width := canvas.width / 5
-	minus_left, plus_left := canvas.width - 2 * button_width, canvas.width - button_width
+	// Slim - and + (a fifteenth of the width each) and ON/OFF switches a sixth wide, as on SYNC.
+	step_width := canvas.width / STEP_BUTTON_PARTS
+	switch_width := canvas.width / SWITCH_BUTTON_PARTS
+	minus_left, plus_left := canvas.width - 2 * step_width, canvas.width - step_width
 	draw_line(l, limit_top, row - scale, fmt.tprintf("MAX AUDIO %s", megabytes_decimal(state.audio_limit)), COLOR_TEXT)
-	draw_small_button(l, minus_left, limit_top, button_width, "-", true, Audio_Limit_Down{})
-	draw_small_button(l, plus_left, limit_top, button_width, "+", true, Audio_Limit_Up{})
+	draw_small_button(l, minus_left, limit_top, step_width, "-", true, Audio_Limit_Down{})
+	draw_small_button(l, plus_left, limit_top, step_width, "+", true, Audio_Limit_Up{})
 
 	// The length patch, with an ON/OFF button at the right.
 	fill_rect(canvas, 0, patch_top, canvas.width, row - scale, COLOR_HEADER)
 	draw_line(l, patch_top, row - scale, "LENGTH PATCH", COLOR_TEXT)
-	draw_small_button(l, canvas.width - 2 * button_width, patch_top, 2 * button_width, "ON" if state.length_patch == 1 else "OFF", state.length_patch == 1, Toggle_Length_Patch{})
+	draw_small_button(l, canvas.width - switch_width, patch_top, switch_width, "ON" if state.length_patch == 1 else "OFF", state.length_patch == 1, Toggle_Length_Patch{})
 
 	// The open pack: its name in full, and what tapping does.
 	fill_rect(canvas, 0, pack_top, canvas.width, l.list_row - scale, COLOR_HEADER)
@@ -302,10 +308,9 @@ draw_sync_page :: proc(l: Layout) {
 	draw_line(l, header_top, row - scale, fmt.tprintf("%d SONGS  TAP TO RELOAD", len(state.stick_rows)), COLOR_TEXT)
 	append(&state.hits, Hit{top = header_top, bottom = header_top + row, target = Reload_Stick{}})
 
-	// The metronome: its volume with - and +, and ON/OFF. Slim - and + (a fifteenth of the width each)
-	// leave the label plenty of room.
-	step_width := canvas.width / 15
-	switch_width := canvas.width / 6
+	// The metronome: its volume with - and +, and ON/OFF.
+	step_width := canvas.width / STEP_BUTTON_PARTS
+	switch_width := canvas.width / SWITCH_BUTTON_PARTS
 	switch_left := canvas.width - switch_width
 	fill_rect(canvas, 0, clicks_top, canvas.width, row - scale, COLOR_HEADER)
 	draw_line(l, clicks_top, row - scale, fmt.tprintf("CLICKS %d%%", state.click_volume), COLOR_TEXT)
