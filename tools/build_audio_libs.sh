@@ -77,15 +77,19 @@ BUILD=$OUT/.objects
 rm -rf "$BUILD"
 mkdir -p "$BUILD/mad" "$BUILD/ogg" "$BUILD/vorbis"
 FLAGS="-O2 -fPIC -w"
+# libogg and libvorbis get the flags Xiph's own build uses for them: the encoder is where the time goes,
+# and fast floating-point maths speeds it up a good deal. (libmad keeps StepMania's: its decoding is
+# fixed-point integer maths, so these wouldn't change it anyway.)
+VORBIS_FLAGS="-O3 -ffast-math -fsigned-char -fPIC -w"
 
 for f in bit decoder fixed frame huffman layer12 layer3 stream synth timer version; do
 	$CC $FLAGS -DHAVE_CONFIG_H -DFPM_64BIT=1 -I"$GEN" -I"$MAD" -c "$MAD/$f.c" -o "$BUILD/mad/$f.o"
 done
 for f in bitwise framing; do
-	$CC $FLAGS -I"$GEN" -I"$SRC/ogg/include" -c "$SRC/ogg/src/$f.c" -o "$BUILD/ogg/$f.o"
+	$CC $VORBIS_FLAGS -I"$GEN" -I"$SRC/ogg/include" -c "$SRC/ogg/src/$f.c" -o "$BUILD/ogg/$f.o"
 done
 for f in analysis bitrate block codebook envelope floor0 floor1 info lookup lpc lsp mapping0 mdct psy registry res0 sharedbook smallft synthesis vorbisenc vorbisfile window; do
-	$CC $FLAGS -I"$GEN" -I"$SRC/ogg/include" -I"$SRC/vorbis/include" -I"$SRC/vorbis/lib" -c "$SRC/vorbis/lib/$f.c" -o "$BUILD/vorbis/$f.o"
+	$CC $VORBIS_FLAGS -I"$GEN" -I"$SRC/ogg/include" -I"$SRC/vorbis/include" -I"$SRC/vorbis/lib" -c "$SRC/vorbis/lib/$f.c" -o "$BUILD/vorbis/$f.o"
 done
 
 # One archive for all three: libvorbis needs libogg, and a single archive makes link order moot.

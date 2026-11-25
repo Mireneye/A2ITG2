@@ -317,3 +317,12 @@ shrinking_a_length_patched_ogg_keeps_the_whole_song :: proc(t: ^testing.T) {
 	testing.expect(t, ok)
 	testing.expectf(t, stated > 9.9, "the shrunk Ogg states %.2f s (it is unpatched until the copy patches it)", stated)
 }
+
+@(test)
+patched_oggs_are_recognised :: proc(t: ^testing.T) {
+	ogg := big_ogg(t, "busy.mp3")
+	defer delete(ogg)
+	testing.expect(t, ogg_stated_length_is_real(ogg))
+	ogg_length_patch(ogg, patched_seconds = 5, if_longer_than = 8)
+	testing.expect(t, !ogg_stated_length_is_real(ogg))
+}

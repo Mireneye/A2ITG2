@@ -85,6 +85,28 @@ ogg_length_patch :: proc(ogg: []u8, patched_seconds := PATCHED_SECONDS, if_longe
 	}
 }
 
+// Whether the length an Ogg states can be trusted. Granule positions only ever grow from page to page,
+// so a last page stating less than the page before it was length patched (by this app or any other
+// tool, to any length): its real length has to be found by decoding.
+ogg_stated_length_is_real :: proc(ogg: []u8) -> bool {
+	previous := i64(-1)
+	at := 0
+	for at + PAGE_HEADER_SIZE <= len(ogg) {
+		page := ogg[at:]
+		if page[0] != 'O' || page[1] != 'g' || page[2] != 'g' || page[3] != 'S' do return false
+		segments := int(page[SEGMENT_COUNT_AT])
+		header_length := PAGE_HEADER_SIZE + segments
+		if header_length > len(page) do return false
+		body_length := 0
+		for size in page[PAGE_HEADER_SIZE:header_length] do body_length += int(size)
+		granule := i64(read_u64_le(page, GRANULE_AT))
+		if page[5] & HEADER_TYPE_EOS != 0 do return granule >= previous
+		if granule != -1 do previous = granule // -1: no packet ends on this page
+		at += header_length + body_length
+	}
+	return false
+}
+
 // The length an Ogg states (its last page's granule position), without changing anything.
 ogg_reported_seconds :: proc(ogg: []u8) -> (seconds: f64, ok: bool) {
 	copy_of := make([]u8, len(ogg), context.temp_allocator)

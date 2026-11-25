@@ -224,5 +224,6 @@ foreign libaudio {
 	ov_clear          :: proc(file: ^OggVorbis_File) -> c.int ---
 	ov_info           :: proc(file: ^OggVorbis_File, link: c.int) -> ^Vorbis_Info_Fields ---
 	ov_pcm_tell       :: proc(file: ^OggVorbis_File) -> i64 ---
+	ov_pcm_total      :: proc(file: ^OggVorbis_File, link: c.int) -> i64 ---
 	ov_read_float     :: proc(file: ^OggVorbis_File, pcm: ^[^][^]f32, samples: c.int, bitstream: ^c.int) -> c.long ---
 }

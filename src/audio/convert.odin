@@ -134,6 +134,9 @@ source_close :: proc(s: ^Sample_Source) {
 	}
 }
 
+// The source's length in sample frames. An MP3 has to be decoded to know. An Ogg states its length,
+// which is taken as it is unless the file was length patched (ogg_stated_length_is_real): then it is
+// counted by decoding too.
 @(private)
 count_samples :: proc(format: Source_Format, bytes: []u8) -> (frames: int, channels: int, rate: int, problem: Convert_Problem) {
 	s: Sample_Source
@@ -141,6 +144,10 @@ count_samples :: proc(format: Source_Format, bytes: []u8) -> (frames: int, chann
 	ok: bool
 	channels, rate, ok = source_open(&s, format, bytes)
 	if !ok do return 0, 0, 0, .Not_Mp3
+	if format == .Ogg && ogg_stated_length_is_real(bytes) {
+		stated := ov_pcm_total(s.ogg.file, -1) - s.ogg.read_offset
+		if stated > 0 do return int(stated), channels, rate, .None
+	}
 	for samples in source_next(&s) do frames += len(samples) / channels
 	if source_failed(&s) do return 0, 0, 0, .Decode_Error
 	return frames, channels, rate, .None
