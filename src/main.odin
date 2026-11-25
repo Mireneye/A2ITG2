@@ -16,8 +16,6 @@ The screen, top to bottom (screen.odin draws it):
 	STICK row   the folder songs are copied into; tap to pick another
 	AUDIO row   the most an Ogg may take (MP3s are converted to fit); tap - or + to change it
 	PATCH row   whether Oggs over 1:45 are length patched to read as 1:45; tap to switch
-	CLICKS row  the metronome: clicks on the chart's beats while a song plays (also on SYNC), how loud
-	            they are (- and +, heard at once), and ON/OFF
 	PACK row    the open pack; tap to read it again
 	the pack's songs; tap one to copy it into the stick folder (videos are left out). The button at a
 	song's right plays it from its preview point (#SAMPLESTART), and pauses it; its audio is kept in
@@ -28,13 +26,14 @@ The screen, top to bottom (screen.odin draws it):
 
 	SYNC page: change the sync of songs already on the stick (stick.odin)
 	STICK row   how many song folders the stick folder has; tap to read it again
+	CLICKS row  the metronome: clicks on the chart's beats while a song plays here, how loud they are
+	            (- and +, heard at once), and ON/OFF
 	the stick's songs; the button at the right plays one from the stick (with the metronome, if on,
 	following the nudges as they're made); tap a song to open it:
 	            its #OFFSET now and the original, and how far the notes moved
 	            STEP     0.1 / 1 / 10 / 100 ms
 	            NOTES EARLIER / NOTES LATER   move the notes by a step (written to the stick at once)
-	            MEASURE  how its notes sit on its music; RESET  the original chart back;
-	            CLICKS   the metronome on or off
+	            MEASURE  how its notes sit on its music; RESET  the original chart back
 	            Before a chart is first changed, the original is kept in the app (stick.odin).
 
 The screen keeps clear of the phone's status and navigation bars (insets.odin).
@@ -334,7 +333,8 @@ handle_worker_messages :: proc() {
 			}
 			// On SYNC the metronome follows the offset as shown, which may be ahead of the stick.
 			if row := stick_row(m.index, m.pack_id); m.page == .Sync && row != nil && row.opened do preview.offset = row.wanted
-			if problem := player_play(preview, state.metronome == 1, f32(state.click_volume) / 100); problem != "" {
+			// Clicks are for syncing: only on SYNC.
+			if problem := player_play(preview, m.page == .Sync && state.metronome == 1, f32(state.click_volume) / 100); problem != "" {
 				say(.Bad, "COULD NOT PLAY THE SONG:", problem)
 				stop_preview()
 				continue
@@ -501,7 +501,7 @@ on_tap :: proc(app: ^glue.android_app, x, y: int) {
 			save_settings()
 		case Toggle_Clicks:
 			state.metronome = 1 - state.metronome
-			player_set_clicks(state.metronome == 1)
+			player_set_clicks(state.metronome == 1 && state.preview_page == .Sync)
 			save_settings()
 		case Preview_Tap:
 			if target.index == state.preview_song && target.page == state.preview_page {

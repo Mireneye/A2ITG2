@@ -162,8 +162,7 @@ draw_songs_page :: proc(l: Layout) {
 	folder_top := l.top
 	limit_top := folder_top + row
 	patch_top := limit_top + row
-	metronome_top := patch_top + row
-	pack_top := metronome_top + row
+	pack_top := patch_top + row
 	list_top := pack_top + l.list_row + scale
 
 	// The song list first, so the rows above cover any part scrolled under them.
@@ -247,13 +246,6 @@ draw_songs_page :: proc(l: Layout) {
 	draw_line(l, patch_top, row - scale, "LENGTH PATCH", COLOR_TEXT)
 	draw_small_button(l, canvas.width - 2 * button_width, patch_top, 2 * button_width, "ON" if state.length_patch == 1 else "OFF", state.length_patch == 1, Toggle_Length_Patch{})
 
-	// The metronome: its volume with - and +, and ON/OFF.
-	fill_rect(canvas, 0, metronome_top, canvas.width, row - scale, COLOR_HEADER)
-	draw_line(l, metronome_top, row - scale, fmt.tprintf("CLICKS %d%%", state.click_volume), COLOR_TEXT)
-	draw_small_button(l, canvas.width - 3 * button_width, metronome_top, button_width, "-", true, Click_Volume{up = false})
-	draw_small_button(l, canvas.width - 2 * button_width, metronome_top, button_width, "+", true, Click_Volume{up = true})
-	draw_small_button(l, canvas.width - button_width, metronome_top, button_width, "ON" if state.metronome == 1 else "OFF", state.metronome == 1, Toggle_Clicks{})
-
 	// The open pack: its name in full, and what tapping does.
 	fill_rect(canvas, 0, pack_top, canvas.width, l.list_row - scale, COLOR_HEADER)
 	if state.pack_id == 0 {
@@ -269,7 +261,8 @@ draw_songs_page :: proc(l: Layout) {
 draw_sync_page :: proc(l: Layout) {
 	canvas, row, scale := l.canvas, l.row, l.scale
 	header_top := l.top
-	list_top := header_top + row + scale
+	clicks_top := header_top + row
+	list_top := clicks_top + row + scale
 	text_height := CELL_HEIGHT * scale
 	panel_height := 3 * text_height + 3 * row + 2 * scale
 
@@ -308,6 +301,14 @@ draw_sync_page :: proc(l: Layout) {
 	fill_rect(canvas, 0, header_top, canvas.width, row - scale, COLOR_HEADER)
 	draw_line(l, header_top, row - scale, fmt.tprintf("%d SONGS  TAP TO RELOAD", len(state.stick_rows)), COLOR_TEXT)
 	append(&state.hits, Hit{top = header_top, bottom = header_top + row, target = Reload_Stick{}})
+
+	// The metronome: its volume with - and +, and ON/OFF.
+	button_width := canvas.width / 5
+	fill_rect(canvas, 0, clicks_top, canvas.width, row - scale, COLOR_HEADER)
+	draw_line(l, clicks_top, row - scale, fmt.tprintf("CLICKS %d%%", state.click_volume), COLOR_TEXT)
+	draw_small_button(l, canvas.width - 3 * button_width, clicks_top, button_width, "-", true, Click_Volume{up = false})
+	draw_small_button(l, canvas.width - 2 * button_width, clicks_top, button_width, "+", true, Click_Volume{up = true})
+	draw_small_button(l, canvas.width - button_width, clicks_top, button_width, "ON" if state.metronome == 1 else "OFF", state.metronome == 1, Toggle_Clicks{})
 }
 
 // A song row's play button, a square at its right end; returns its left edge.
@@ -361,14 +362,11 @@ draw_sync_panel :: proc(l: Layout, top, list_top: int, song: ^Stick_Row) {
 	panel_buttons(l, buttons_top, list_top, step_labels[:], state.sync_step, proc(i: int) -> Tap_Target { return Pick_Sync_Step{step = i} })
 	nudge_labels := [2]string{"NOTES EARLIER", "NOTES LATER"}
 	panel_buttons(l, buttons_top + row, list_top, nudge_labels[:], -1, proc(i: int) -> Tap_Target { return Nudge_Notes{earlier = i == 0} })
-	// Short labels: three to a row fit 9 letters. RESET is dim with nothing to undo, CLICKS lit when on.
-	tool_labels := [3]string{"MEASURE", "RESET", "CLICKS"}
-	panel_buttons(l, buttons_top + 2 * row, list_top, tool_labels[:], 2 if state.metronome == 1 else -1, dim = -1 if song.chart.has_backup else 1, target_of = proc(i: int) -> Tap_Target {
-		switch i {
-		case 0: return Measure_Stick{}
-		case 1: return Reset_Stick{}
-		}
-		return Toggle_Clicks{}
+	// RESET is dim with nothing to undo.
+	tool_labels := [2]string{"MEASURE", "RESET"}
+	panel_buttons(l, buttons_top + 2 * row, list_top, tool_labels[:], -1, dim = -1 if song.chart.has_backup else 1, target_of = proc(i: int) -> Tap_Target {
+		if i == 0 do return Measure_Stick{}
+		return Reset_Stick{}
 	})
 }
 
