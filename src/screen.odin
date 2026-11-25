@@ -439,12 +439,14 @@ draw_two_lines :: proc(l: Layout, top: int, first, second: string, first_color, 
 	draw_text(l.canvas, fit(second, second_columns if second_columns >= 0 else l.columns), margin, y + CELL_HEIGHT * l.scale, l.scale, second_color)
 }
 
-// A song row's details from its chart, "B1 E4 M8 H11 C13  2:05  148", made to fit `columns`: first the
+// A song row's details from its chart, "B1 S4 M8 H11 E13  2:05  148", made to fit `columns`: first the
 // beginner chart goes, then the wide gaps, then the tempo. The harder difficulties always stay.
+// Letters by the cabinet's names, each different: Beginner, Simple (easy), Medium, Hard, Expert
+// (the file's Challenge).
 @(private = "file")
 info_text :: proc(info: Song_Info_Text, columns: int) -> string {
 	if info.state == .No_Sm do return "NO .SM: ITG2 CAN'T USE IT"
-	letters := [chart.Difficulty]u8{.Beginner = 'B', .Easy = 'E', .Medium = 'M', .Hard = 'H', .Challenge = 'C'}
+	letters := [chart.Difficulty]u8{.Beginner = 'B', .Easy = 'S', .Medium = 'M', .Hard = 'H', .Challenge = 'E'}
 	s := info.summary
 	bpm := ""
 	switch {
