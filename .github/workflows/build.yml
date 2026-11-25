@@ -96,15 +96,10 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          # Replace the release outright, its tag made at the commit that was built (no git push needed).
           NOTES="Built from ${GITHUB_SHA::7}: $(git log -1 --format=%s)"
-          if gh release view latest > /dev/null 2>&1; then
-            gh release upload latest build/a2itg2.apk --clobber
-            gh release edit latest --notes "$NOTES"
-          else
-            gh release create latest build/a2itg2.apk --prerelease --title "Latest build" --notes "$NOTES"
-          fi
-          # Keep the tag on the commit that was built.
-          git tag -f latest && git push -f origin latest
+          gh release delete latest --cleanup-tag --yes 2> /dev/null || true
+          gh release create latest build/a2itg2.apk --target "$GITHUB_SHA" --prerelease --title "Latest build" --notes "$NOTES"
 
       - name: Keep the APK with the run
         uses: actions/upload-artifact@v4
