@@ -3,7 +3,8 @@
 | Path | What |
 |---|---|
 | `src/main.odin` | The app: start-up, the loop, status text, touches, what each tap does |
-| `src/screen.odin` | Drawing the screen (status, PACKS and SONGS pages, the keyboard) and where the tap targets are |
+| `src/screen.odin` | Drawing the screen (status, PACKS and SONGS pages) and where the tap targets are |
+| `src/text_input.odin` | Typing with Android's keyboard: a dialog with a real text field, through `vendor:android/java` |
 | `src/catalog.odin` | The site's pack list (cached a day, 0.8 MB) and the searches: pack names on the phone, songs/artists/authors on the site |
 | `src/worker.odin` | The worker thread: downloads and copies run here so the screen keeps answering |
 | `src/pack.odin` | A pack on stepmaniaonline.net: reading its table of contents, finding its songs, copying one song (its `.sm` and the files the `.sm` names) |

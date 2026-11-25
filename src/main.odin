@@ -8,9 +8,9 @@ The screen, top to bottom (screen.odin draws it):
 
 	PACKS page: find a pack on the site
 	SEARCH BY row  pack name, song title, artist or chart author; tap to cycle
-	the search text
+	the search text: tap it to type, with Android's keyboard (text_input.odin); pack names are
+	               searched as you type, the others on Search
 	the packs found (the newest packs when nothing is typed); tap one to open it on the SONGS page
-	a keyboard: pack names are searched as you type, the others on SEARCH
 
 	SONGS page: copy songs from the open pack
 	STICK row   the folder songs are copied into; tap to pick another
@@ -62,7 +62,7 @@ Page :: enum u8 {
 Tap_Target :: union {
 	Show_Page,
 	Cycle_Search_Kind,
-	Key,
+	Edit_Query,
 	Pack_Tap,
 	Change_Folder,
 	Audio_Limit_Down,
@@ -74,9 +74,7 @@ Tap_Target :: union {
 Show_Page         :: struct { page: Page }
 Cycle_Search_Kind :: struct {}
 Pack_Tap          :: struct { index: int }
-// A keyboard key: a character, or one of the special keys.
-Key :: struct { char: u8, special: Special_Key }
-Special_Key :: enum u8 { None, Delete, Search }
+Edit_Query        :: struct {}
 Change_Folder    :: struct {}
 Audio_Limit_Down :: struct {}
 Audio_Limit_Up   :: struct {}
@@ -105,7 +103,8 @@ App_State :: struct {
 
 	page:          Page,
 	search_kind:   Search_Kind,
-	query:         [dynamic]u8, // upper-case letters, digits and spaces
+	query:         string, // as typed (heap)
+	typing:        bool,   // the text dialog is open
 	results:       []Pack_Row,
 	results_scroll: int,
 	search_stamp:  int, // the latest search sent; older answers are dropped
@@ -157,6 +156,7 @@ main :: proc() {
 			handle_picker_result(result)
 		}
 		handle_worker_messages()
+		handle_text_events()
 		free_all(context.temp_allocator)
 	}
 }
@@ -240,8 +240,13 @@ on_tap :: proc(app: ^glue.android_app, x, y: int) {
 		case Cycle_Search_Kind:
 			state.search_kind = Search_Kind((int(state.search_kind) + 1) % len(Search_Kind))
 			if state.search_kind == .Pack_Name do search_now()
-		case Key:
-			type_key(target)
+		case Edit_Query:
+			if state.typing do return
+			if err := open_text_input(app, fmt.tprintf("Search by %s", strings.to_lower(SEARCH_KIND_LABEL[state.search_kind], context.temp_allocator)), state.query); err != "" {
+				say(.Bad, "COULD NOT OPEN THE TEXT BOX:", err)
+				return
+			}
+			state.typing = true
 		case Pack_Tap:
 			if state.copying >= 0 {
 				say(.Waiting, "WAIT FOR THE COPY TO FINISH BEFORE OPENING ANOTHER PACK.")
@@ -290,24 +295,32 @@ on_tap :: proc(app: ^glue.android_app, x, y: int) {
 	}
 }
 
-// Pack names are searched as you type; the other searches ask the site, so they wait for SEARCH.
-type_key :: proc(key: Key) {
-	MAX_QUERY :: 40
-	switch key.special {
-	case .None:
-		if len(state.query) < MAX_QUERY do append(&state.query, key.char)
-		if state.search_kind == .Pack_Name do search_now()
-	case .Delete:
-		if len(state.query) > 0 do pop(&state.query)
-		if state.search_kind == .Pack_Name do search_now()
-	case .Search:
-		search_now()
+// What happened in the text dialog. Pack names are searched as you type; the other searches ask
+// the site, so they wait for Search.
+handle_text_events :: proc() {
+	events := take_text_events(context.temp_allocator)
+	if len(events) == 0 do return
+	for event in events {
+		switch event.kind {
+		case .Changed:
+			delete(state.query)
+			state.query = event.text
+			if state.search_kind == .Pack_Name do search_now()
+		case .Submitted:
+			delete(state.query)
+			state.query = event.text
+			search_now()
+		case .Closed:
+			delete(event.text)
+			state.typing = false
+		}
 	}
+	draw(glue.app())
 }
 
 search_now :: proc() {
 	state.search_stamp += 1
-	worker_ask(Search_Packs{kind = state.search_kind, query = strings.clone(string(state.query[:])), stamp = state.search_stamp})
+	worker_ask(Search_Packs{kind = state.search_kind, query = strings.clone(state.query), stamp = state.search_stamp})
 }
 
 free_pack_rows :: proc(rows: []Pack_Row) {

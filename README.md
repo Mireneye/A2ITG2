@@ -41,8 +41,9 @@ Then:
 
 **PACKS page**: find a pack.
 1. With nothing typed, the newest packs on the site are listed.
-2. **SEARCH BY** (tap to cycle): pack name, song title, artist, chart author. Pack names are searched as you type;
-   the others ask the site when you tap **SEARCH** (about 3 seconds). Results show each pack's size; `SM5` marks
+2. **SEARCH BY** (tap to cycle): pack name, song title, artist, chart author. Tap the search text to type: Android's
+   own keyboard comes up in a small dialog. Pack names are searched as you type; the others ask the site when you
+   tap **Search** (about 3 seconds). Results show each pack's size; `SM5` marks
    packs made for StepMania 5, whose charts may be `.ssc` only (ITG2 reads `.sm`).
 3. Tap a pack to open it on the SONGS page. The app remembers it.
 

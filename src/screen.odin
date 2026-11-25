@@ -23,9 +23,6 @@ COLOR_WAITING    :: 0xff_b0_6a_2a // #2a6ab0
 COLOR_GOOD       :: 0xff_6a_b8_3c // #3cb86a
 COLOR_BAD        :: 0xff_3c_44_d0 // #d0443c
 
-@(rodata)
-KEYBOARD_ROWS := [?]string{"1234567890", "QWERTYUIOP", "ASDFGHJKL", "ZXCVBNM"}
-
 text_scale :: proc(app: ^glue.android_app) -> int {
 	if app == nil || app.window == nil do return 2
 	return max(int(android.ANativeWindow_getWidth(app.window)) / 180, 2)
@@ -95,9 +92,7 @@ draw_packs_page :: proc(l: Layout) {
 	query_top := kind_top + row
 	list_top := query_top + row + scale
 
-	// The keyboard sits at the bottom: four rows of keys, then DEL / SPACE / SEARCH.
-	keyboard_top := canvas.height - 5 * row
-	list_bottom := keyboard_top - scale
+	list_bottom := canvas.height
 
 	// The packs found.
 	list_height := len(state.results) * row
@@ -116,37 +111,18 @@ draw_packs_page :: proc(l: Layout) {
 	if len(state.results) == 0 {
 		draw_text(canvas, "NO PACKS FOUND YET.", MARGIN_CELLS * CELL_WIDTH * scale, list_top + 3 * scale, scale, COLOR_DIM)
 	}
-	fill_rect(canvas, 0, list_bottom, canvas.width, canvas.height - list_bottom, COLOR_BACKGROUND)
 	fill_rect(canvas, 0, kind_top, canvas.width, list_top - kind_top, COLOR_BACKGROUND)
 
 	// SEARCH BY and the search text.
 	fill_rect(canvas, 0, kind_top, canvas.width, row - scale, COLOR_HEADER)
 	draw_row_text(canvas, fmt.tprintf("SEARCH BY: %s", SEARCH_KIND_LABEL[state.search_kind]), "CHANGE", kind_top, row - scale, scale, l.columns, COLOR_TEXT)
 	append(&state.hits, Hit{top = kind_top, bottom = kind_top + row, target = Cycle_Search_Kind{}})
-	typed := string(state.query[:])
-	hint := "NEWEST PACKS" if typed == "" else ""
-	draw_row_text(canvas, fmt.tprintf("> %s_", typed), hint, query_top, row - scale, scale, l.columns, COLOR_TEXT)
-
-	// The keyboard.
-	key_width := canvas.width / 10
-	for keys, r in KEYBOARD_ROWS {
-		top := keyboard_top + r * row
-		indent := (canvas.width - len(keys) * key_width) / 2
-		for i in 0..<len(keys) {
-			draw_key(l, indent + i * key_width, top, key_width, keys[i:i + 1], Key{char = keys[i]})
-		}
-	}
-	bottom_row := keyboard_top + 4 * row
-	draw_key(l, 0, bottom_row, 2 * key_width, "DEL", Key{special = .Delete})
-	draw_key(l, 2 * key_width, bottom_row, 5 * key_width, "SPACE", Key{char = ' '})
-	draw_key(l, 7 * key_width, bottom_row, canvas.width - 7 * key_width, "SEARCH", Key{special = .Search})
-}
-
-@(private = "file")
-draw_key :: proc(l: Layout, left, top, width: int, label: string, key: Key) {
-	fill_rect(l.canvas, left + l.scale, top + l.scale, width - 2 * l.scale, l.row - 2 * l.scale, COLOR_KEY)
-	draw_text(l.canvas, label, left + (width - len(label) * CELL_WIDTH * l.scale) / 2, top + (l.row - GLYPH_HEIGHT * l.scale) / 2, l.scale)
-	append(&state.hits, Hit{top = top, bottom = top + l.row, left = left, right = left + width, target = key})
+	// The search text: tap to type (Android's keyboard, in a dialog).
+	fill_rect(canvas, 0, query_top, canvas.width, row - scale, COLOR_KEY)
+	typed := strings.to_upper(state.query, context.temp_allocator)
+	shown := typed if typed != "" else "NEWEST PACKS"
+	draw_row_text(canvas, fmt.tprintf("> %s", shown), "TAP TO TYPE", query_top, row - scale, scale, l.columns, COLOR_TEXT if typed != "" else COLOR_DIM)
+	append(&state.hits, Hit{top = query_top, bottom = query_top + row, target = Edit_Query{}})
 }
 
 @(private = "file")
