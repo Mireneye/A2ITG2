@@ -15,6 +15,7 @@ Measures are split by commas and hold 4 beats, their rows spread evenly over the
 */
 package chart
 
+import "core:fmt"
 import "core:slice"
 import "core:strconv"
 import "core:strings"
@@ -155,4 +156,13 @@ index_of_tag :: proc(sm, tag: string) -> int {
 		if strings.equal_fold(sm[i + 1:][:len(tag)], tag) && sm[i + 1 + len(tag)] == ':' do return i
 	}
 	return -1
+}
+
+// An #OFFSET as StepMania writes it: "0.161", "-4.888"; four decimals when the tenth of a millisecond
+// is used ("0.1615"). In temp memory.
+format_offset :: proc(offset: f64) -> string {
+	text := fmt.tprintf("%.4f", offset)
+	if strings.has_suffix(text, "0") do text = text[:len(text) - 1]
+	if text == "-0.000" do text = "0.000"
+	return text
 }

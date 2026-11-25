@@ -38,11 +38,53 @@ Search_Packs :: struct {
 	stamp: int,    // the screen keeps only the answer to its latest search
 }
 
+// SYNC page jobs (stick.odin). Strings are heap; the worker frees them. `stamp` is the stick list the
+// screen had when asking: answers for an older list are dropped.
+List_Stick :: struct {
+	tree:  string,
+	stamp: int,
+}
+
+Open_Stick_Song :: struct {
+	index:     int,
+	stamp:     int,
+	tree:      string,
+	folder_id: string,
+}
+
+Set_Stick_Offset :: struct {
+	index:  int,
+	stamp:  int,
+	tree:   string,
+	sm_id:  string,
+	offset: f64,
+}
+
+Reset_Stick_Song :: struct {
+	index: int,
+	stamp: int,
+	tree:  string,
+	sm_id: string,
+}
+
+Measure_Stick_Song :: struct {
+	index:    int,
+	stamp:    int,
+	tree:     string,
+	sm_id:    string,
+	music_id: string,
+}
+
 Job :: union {
 	Open_Pack,
 	Copy_Song,
 	Load_Catalog,
 	Search_Packs,
+	List_Stick,
+	Open_Stick_Song,
+	Set_Stick_Offset,
+	Reset_Stick_Song,
+	Measure_Stick_Song,
 }
 
 Song_Row :: struct {
@@ -76,11 +118,48 @@ Search_Results :: struct {
 	rows:  []Pack_Row, // heap
 }
 
+Stick_Listed :: struct {
+	stamp: int,
+	songs: []Stick_Song, // heap
+	ok:    bool,
+}
+
+Stick_Opened :: struct {
+	index: int,
+	stamp: int,
+	chart: Stick_Chart, // heap ids; empty sm_id when it couldn't be read
+}
+
+Stick_Offset_Written :: struct {
+	index:  int,
+	stamp:  int,
+	offset: f64,
+	ok:     bool,
+}
+
+Stick_Reset_Done :: struct {
+	index:    int,
+	stamp:    int,
+	original: f64,
+	ok:       bool,
+}
+
+Stick_Measured :: struct {
+	index: int,
+	stamp: int,
+	sync:  Song_Sync,
+}
+
 Message :: union {
 	Say,
 	Pack_Ready,
 	Copy_Progress,
 	Search_Results,
+	Stick_Listed,
+	Stick_Opened,
+	Stick_Offset_Written,
+	Stick_Reset_Done,
+	Stick_Measured,
 }
 
 @(private = "file") jobs_lock:     sync.Mutex
@@ -145,6 +224,35 @@ worker_main :: proc() {
 		case Copy_Song:    do_copy_song(j)
 		case Load_Catalog: do_load_catalog(j)
 		case Search_Packs: do_search(j)
+		case List_Stick:
+			defer delete(j.tree)
+			songs, problem := stick_list(j.tree)
+			if problem != "" do say_from_worker(.Bad, "COULD NOT LIST THE STICK'S SONGS", problem)
+			tell(Stick_Listed{stamp = j.stamp, songs = songs, ok = problem == ""})
+		case Open_Stick_Song:
+			defer delete(j.tree)
+			defer delete(j.folder_id)
+			chart, problem := stick_open(j.tree, j.folder_id)
+			if problem != "" do say_from_worker(.Bad, "COULD NOT READ THIS SONG'S CHART", problem)
+			tell(Stick_Opened{index = j.index, stamp = j.stamp, chart = chart})
+		case Set_Stick_Offset: do_set_stick_offset(j)
+		case Reset_Stick_Song:
+			defer delete(j.tree)
+			defer delete(j.sm_id)
+			original, problem := stick_reset(j.tree, j.sm_id)
+			if problem != "" {
+				say_from_worker(.Bad, "COULD NOT PUT THE ORIGINAL BACK", problem)
+			} else {
+				say_from_worker(.Good, fmt.tprintf("ORIGINAL CHART BACK: #OFFSET %s.", format_offset(original)), "SAFE TO UNPLUG THE STICK.")
+			}
+			tell(Stick_Reset_Done{index = j.index, stamp = j.stamp, original = original, ok = problem == ""})
+		case Measure_Stick_Song:
+			defer delete(j.tree)
+			defer delete(j.sm_id)
+			defer delete(j.music_id)
+			sync, problem := stick_measure(j.tree, j.sm_id, j.music_id)
+			if problem != "" do say_from_worker(.Bad, "COULD NOT READ THE SONG FROM THE STICK", problem)
+			tell(Stick_Measured{index = j.index, stamp = j.stamp, sync = sync})
 		}
 		free_all(context.temp_allocator)
 	}
@@ -199,6 +307,24 @@ do_search :: proc(job: Search_Packs) {
 		return
 	}
 	if job.kind != .Pack_Name && strings.trim_space(job.query) != "" do say_from_worker(.Good, fmt.tprintf("%d SONGS FOUND%s. TAP ONE TO OPEN ITS PACK.", len(rows), " (THE FIRST 200)" if len(rows) == MAX_RESULTS else ""))
+}
+
+// Taps queue a write each; only the newest for a chart is written (the stick is slow).
+@(private = "file")
+do_set_stick_offset :: proc(job: Set_Stick_Offset) {
+	defer delete(job.tree)
+	defer delete(job.sm_id)
+	sync.mutex_lock(&jobs_lock)
+	for queued in jobs {
+		if later, is_set := queued.(Set_Stick_Offset); is_set && later.sm_id == job.sm_id {
+			sync.mutex_unlock(&jobs_lock)
+			return
+		}
+	}
+	sync.mutex_unlock(&jobs_lock)
+	problem := stick_set_offset(job.tree, job.sm_id, job.offset)
+	if problem != "" do say_from_worker(.Bad, "COULD NOT CHANGE THE CHART", problem)
+	tell(Stick_Offset_Written{index = job.index, stamp = job.stamp, offset = job.offset, ok = problem == ""})
 }
 
 @(private = "file")

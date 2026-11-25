@@ -1,8 +1,9 @@
 /*
-android.provider.DocumentsContract, called through JNI by hand.
+android.provider.DocumentsContract and android.database.Cursor, called through JNI by hand.
 
-vendor:android/java's generated bindings don't include the android.provider package, so these three
-methods are written the way its generated wrappers are: find the class and method once, then call.
+vendor:android/java's generated bindings don't include the android.provider or android.database
+packages, so these methods are written the way its generated wrappers are: find the class and method
+once, then call.
 */
 package a2itg2
 
@@ -71,4 +72,64 @@ documents_create_document :: proc "contextless" (resolver: ^java.ContentResolver
 @(private = "file")
 take_exception :: proc "contextless" (env: ^android.JNIEnv) -> ^java.Throwable {
 	return (^java.Throwable)(android.jni_take_exception(env))
+}
+
+// The URI listing `parent_id`'s children (query it with documents_query_children).
+documents_build_child_documents_uri_using_tree :: proc "contextless" (tree: ^java.Uri, parent_id: ^java.String) -> (uri: ^java.Uri, exception: ^java.Throwable) {
+	@(static) cache: android.jmethodID
+	env, class, method := documents_method(&cache, "buildChildDocumentsUriUsingTree", "(Landroid/net/Uri;Ljava/lang/String;)Landroid/net/Uri;") or_return
+	args := [?]android.jvalue{{l = tree}, {l = parent_id}}
+	return (^java.Uri)(env->CallStaticObjectMethodA(class, method, &args[0])), take_exception(env)
+}
+
+// android.database.Cursor, by hand too (not in the generated bindings either): just what walking a
+// query's rows needs.
+@(private = "file") cursor_class: android.jclass
+
+@(private = "file")
+cursor_method :: proc "contextless" (cache: ^android.jmethodID, name, signature: cstring) -> (env: ^android.JNIEnv, id: android.jmethodID, exception: ^java.Throwable) {
+	env = android.jni_env()
+	class := intrinsics.atomic_load_explicit(&cursor_class, .Acquire)
+	if class == nil {
+		local := env->FindClass("android/database/Cursor")
+		if local == nil do return env, nil, take_exception(env)
+		class = env->NewGlobalRef(local)
+		env->DeleteLocalRef(local)
+		intrinsics.atomic_store_explicit(&cursor_class, class, .Release)
+	}
+	id = intrinsics.atomic_load_explicit(cache, .Acquire)
+	if id == nil {
+		id = env->GetMethodID(class, name, signature)
+		if id == nil do return env, nil, take_exception(env)
+		intrinsics.atomic_store_explicit(cache, id, .Release)
+	}
+	return
+}
+
+cursor_move_to_next :: proc "contextless" (cursor: ^java.Cursor) -> (more: bool, exception: ^java.Throwable) {
+	@(static) cache: android.jmethodID
+	env, method := cursor_method(&cache, "moveToNext", "()Z") or_return
+	more = env->CallBooleanMethodA(cursor, method, nil) != 0
+	return more, take_exception(env)
+}
+
+cursor_get_string :: proc "contextless" (cursor: ^java.Cursor, column: i32) -> (value: ^java.String, exception: ^java.Throwable) {
+	@(static) cache: android.jmethodID
+	env, method := cursor_method(&cache, "getString", "(I)Ljava/lang/String;") or_return
+	args := [?]android.jvalue{{i = column}}
+	return (^java.String)(env->CallObjectMethodA(cursor, method, &args[0])), take_exception(env)
+}
+
+cursor_get_long :: proc "contextless" (cursor: ^java.Cursor, column: i32) -> (value: i64, exception: ^java.Throwable) {
+	@(static) cache: android.jmethodID
+	env, method := cursor_method(&cache, "getLong", "(I)J") or_return
+	args := [?]android.jvalue{{i = column}}
+	return i64(env->CallLongMethodA(cursor, method, &args[0])), take_exception(env)
+}
+
+cursor_close :: proc "contextless" (cursor: ^java.Cursor) -> (exception: ^java.Throwable) {
+	@(static) cache: android.jmethodID
+	env, method := cursor_method(&cache, "close", "()V") or_return
+	env->CallVoidMethodA(cursor, method, nil)
+	return take_exception(env)
 }

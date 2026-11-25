@@ -2,14 +2,15 @@
 
 | Path | What |
 |---|---|
-| `src/main.odin` | The app: start-up, the loop, status text, touches, what each tap does |
+| `src/main.odin` | The app: start-up, the loop, status text, touches, what each tap does (PACKS, SONGS, SYNC pages) |
 | `src/screen.odin` | Drawing the screen (status, PACKS and SONGS pages) and where the tap targets are |
 | `src/text_input.odin` | Typing with Android's keyboard: a dialog with a real text field, through `vendor:android/java` |
 | `src/catalog.odin` | The site's pack list (cached a day, 0.8 MB) and the searches: pack names on the phone, songs/artists/authors on the site |
 | `src/worker.odin` | The worker thread: downloads and copies run here so the screen keeps answering |
 | `src/pack.odin` | A pack on stepmaniaonline.net: reading its table of contents, finding its songs, copying one song (its `.sm` and the files the `.sm` names) |
-| `src/folder.odin` | The stick: Android's folder picker, keeping access across restarts, making folders and files (fsynced) |
-| `src/documents.odin` | `android.provider.DocumentsContract` called through JNI by hand (Odin's generated bindings skip `android.provider`) |
+| `src/folder.odin` | The stick: Android's folder picker, keeping access across restarts, making folders and files (fsynced), listing a folder, reading and overwriting a file |
+| `src/stick.odin` | The SYNC page's work on songs already on the stick: listing them, reading and changing `#OFFSET`, backups of the original charts, RESET, MEASURE |
+| `src/documents.odin` | `android.provider.DocumentsContract` and `android.database.Cursor` called through JNI by hand (Odin's generated bindings skip those packages) |
 | `src/text.odin` | Pixel drawing and a 5x7 bitmap font (ZZ-Replace: stand-in UI) |
 | `src/web/` | HTTPS GET of a byte range, over `src/tls` |
 | `src/zip/` | Reading a zip a few byte ranges at a time, ZIP64 included; `zip_test.odin` tests it |

@@ -7,6 +7,8 @@ Folder access through Android's folder picker (the Storage Access Framework).
 	folder_access_kept     checks a remembered folder is still accessible
 	root_folder, create_folder, write_file
 	                       make folders and files inside the picked folder (files are fsynced)
+	list_children, read_document, overwrite_document
+	                       what a folder holds, reading a file, and replacing a file's contents
 
 A folder is identified by its "address": the picker's content:// URI as text.
 The calls that can fail return "" on success, or a short error to show on screen.
@@ -197,6 +199,115 @@ write_file :: proc(folder: Folder_Ref, name: string, bytes: []u8, mime := "appli
 	}
 	if posix.fsync(posix.FD(fd)) != .OK do return "COULD NOT FLUSH THE FILE TO THE STICK"
 	return ""
+}
+
+// One thing inside a folder.
+Child :: struct {
+	id:        string, // document id (heap)
+	name:      string, // heap
+	is_folder: bool,
+	bytes:     i64,
+}
+
+children_destroy :: proc(children: []Child) {
+	for child in children {
+		delete(child.id)
+		delete(child.name)
+	}
+	delete(children)
+}
+
+// What `folder` holds, in the order Android lists it.
+list_children :: proc(folder: Folder_Ref) -> (children: []Child, problem: string) {
+	inner :: proc(folder: Folder_Ref, out: ^[dynamic]Child) -> (exception: ^java.Throwable) {
+		tree := parse_uri(folder.tree) or_return
+		parent_id := java.string_from(folder.document_id) or_return
+		uri := documents_build_child_documents_uri_using_tree(tree, parent_id) or_return
+		// DocumentsContract.Document columns
+		COLUMNS :: [4]string{"document_id", "_display_name", "mime_type", "_size"}
+		projection := java.array_new(java.Array(java.String), len(COLUMNS), "java/lang/String") or_return
+		for column, i in COLUMNS do java.array_set(projection, i32(i), java.string_from(column) or_return) or_return
+		resolver := content_resolver() or_return
+		cursor := java.ContentResolver_query_Uri_StringArray_String_StringArray_String(resolver, uri, projection, nil, nil, nil) or_return
+		if cursor == nil do return nil
+		defer cursor_close(cursor)
+		for {
+			more := cursor_move_to_next(cursor) or_return
+			if !more do break
+			child := read_row(cursor) or_return
+			append(out, child)
+		}
+		return nil
+	}
+	// Each row's Java strings are dropped right after: a folder can list hundreds.
+	read_row :: proc(cursor: ^java.Cursor) -> (child: Child, exception: ^java.Throwable) {
+		java.push_local_frame() or_return
+		defer java.pop_local_frame_all()
+		id := cursor_get_string(cursor, 0) or_return
+		name := cursor_get_string(cursor, 1) or_return
+		mime := cursor_get_string(cursor, 2) or_return
+		child.bytes = cursor_get_long(cursor, 3) or_return
+		child.id = java.string_to(id, context.allocator) or_return
+		child.name = java.string_to(name, context.allocator) or_return
+		if mime != nil do child.is_folder = (java.string_to(mime, context.temp_allocator) or_return) == DOCUMENT_FOLDER_MIME
+		return
+	}
+	local_frame_scope()
+	out := make([dynamic]Child)
+	if exception := inner(folder, &out); exception != nil {
+		children_destroy(out[:])
+		return nil, describe(exception)
+	}
+	return out[:], ""
+}
+
+// A whole file, read from the stick (heap).
+read_document :: proc(tree, document_id: string) -> (bytes: []u8, problem: string) {
+	fd, exception := open_document(tree, document_id, "r")
+	if exception != nil do return nil, describe(exception)
+	if fd < 0 do return nil, "ANDROID WOULD NOT OPEN THE FILE"
+	defer posix.close(posix.FD(fd))
+	out := make([dynamic]u8)
+	chunk: [64 * 1024]u8
+	for {
+		n := posix.read(posix.FD(fd), &chunk[0], len(chunk))
+		if n < 0 {
+			delete(out)
+			return nil, "READING THE FILE FAILED"
+		}
+		if n == 0 do break
+		append(&out, ..chunk[:n])
+	}
+	return out[:], ""
+}
+
+// Replaces a file's contents with `bytes` (cut to the new length), fsynced.
+overwrite_document :: proc(tree, document_id: string, bytes: []u8) -> string {
+	fd, exception := open_document(tree, document_id, "wt")
+	if exception != nil do return describe(exception)
+	if fd < 0 do return "ANDROID WOULD NOT OPEN THE FILE FOR WRITING"
+	defer posix.close(posix.FD(fd))
+	for written := 0; written < len(bytes); {
+		remaining := bytes[written:]
+		n := posix.write(posix.FD(fd), raw_data(remaining), uint(len(remaining)))
+		if n <= 0 do return fmt.tprintf("WRITE STOPPED AFTER %d OF %d BYTES", written, len(bytes))
+		written += int(n)
+	}
+	if posix.fsync(posix.FD(fd)) != .OK do return "COULD NOT FLUSH THE FILE TO THE STICK"
+	return ""
+}
+
+@(private = "file")
+open_document :: proc(tree, document_id, mode: string) -> (fd: i32, exception: ^java.Throwable) {
+	local_frame_scope()
+	tree_uri := parse_uri(tree) or_return
+	id := java.string_from(document_id) or_return
+	uri := documents_build_document_uri_using_tree(tree_uri, id) or_return
+	resolver := content_resolver() or_return
+	java_mode := java.string_from(mode) or_return
+	descriptor := java.ContentResolver_openFileDescriptor_Uri_String(resolver, uri, java_mode) or_return
+	if descriptor == nil do return -1, nil
+	return java.ParcelFileDescriptor_detachFd(descriptor)
 }
 
 // A new file in `folder`, open for writing; -1 if Android made no file.

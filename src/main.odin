@@ -20,7 +20,16 @@ The screen, top to bottom (screen.odin draws it):
 	the pack's songs; tap one to copy it into the stick folder (videos are left out). A copied song
 	whose notes sit off its music carries a sync mark at the right (SYNC +9 MS, or SYNC ? when it
 	couldn't be measured); tap the mark to fold out what was measured and the #OFFSET that would fit.
-	Nothing is changed: the sync is the user's to set.
+	Nothing is changed: the sync is the user's to set (on SYNC).
+
+	SYNC page: change the sync of songs already on the stick (stick.odin)
+	STICK row   how many song folders the stick folder has; tap to read it again
+	the stick's songs; tap one to open it:
+	            its #OFFSET now and the original, and how far the notes moved
+	            STEP     0.1 / 1 / 10 / 100 ms
+	            NOTES EARLIER / NOTES LATER   move the notes by a step (written to the stick at once)
+	            MEASURE  how its notes sit on its music; RESET  the original chart back
+	            Before a chart is first changed, the original is kept in the app (stick.odin).
 
 The screen keeps clear of the phone's status and navigation bars (insets.odin).
 Everything slow runs on the worker thread (worker.odin); this loop only draws and handles touches.
@@ -32,6 +41,7 @@ package a2itg2
 
 import "core:fmt"
 import "core:log"
+import "core:math"
 import "core:os"
 import "core:strconv"
 import "core:strings"
@@ -68,7 +78,14 @@ Screen_Mood :: enum {
 Page :: enum u8 {
 	Packs,
 	Songs,
+	Sync,
 }
+
+// The SYNC page's steps, in seconds of #OFFSET.
+@(rodata)
+SYNC_STEPS := [4]f64{0.0001, 0.001, 0.01, 0.1}
+@(rodata)
+SYNC_STEP_LABELS := [4]string{"0.1 MS", "1 MS", "10 MS", "100 MS"}
 
 Tap_Target :: union {
 	Show_Page,
@@ -82,6 +99,12 @@ Tap_Target :: union {
 	Reload_Pack,
 	Song_Tap,
 	Sync_Fold,
+	Reload_Stick,
+	Stick_Song_Tap,
+	Pick_Sync_Step,
+	Nudge_Notes,
+	Measure_Stick,
+	Reset_Stick,
 }
 Show_Page         :: struct { page: Page }
 Pick_Search_Kind  :: struct { kind: Search_Kind }
@@ -94,6 +117,23 @@ Toggle_Length_Patch :: struct {}
 Reload_Pack      :: struct {}
 Song_Tap         :: struct { index: int }
 Sync_Fold        :: struct { index: int }
+Reload_Stick     :: struct {}
+Stick_Song_Tap   :: struct { index: int }
+Pick_Sync_Step   :: struct { step: int }
+Nudge_Notes      :: struct { earlier: bool }
+Measure_Stick    :: struct {}
+Reset_Stick      :: struct {}
+
+// A song on the stick, as the SYNC page knows it.
+Stick_Row :: struct {
+	song:      Stick_Song,  // heap
+	chart:     Stick_Chart, // heap ids, once opened
+	opened:    bool,
+	opening:   bool,
+	wanted:    f64, // the #OFFSET shown: written to the stick, or on its way
+	sync:      Song_Sync,
+	measuring: bool,
+}
 
 // A tap target's area. left/right 0/0 means the whole width.
 Hit :: struct {
@@ -138,6 +178,13 @@ App_State :: struct {
 	touch_last_y:  f32,
 	dragging:      bool,
 
+	stick_rows:    []Stick_Row,
+	stick_stamp:   int,  // bumped on every new list; answers about an older one are dropped
+	stick_listing: bool,
+	sync_open:     int,  // the open stick song, or -1
+	sync_step:     int,  // index into SYNC_STEPS (a saved setting)
+	sync_scroll:   int,
+
 	redraw:        bool, // draw when the loop has taken everything waiting
 	bars:          Bar_Insets,
 	bars_known:    bool,
@@ -156,6 +203,7 @@ main :: proc() {
 	state.copying = -1
 	state.highlight = -1
 	state.fold_open = -1
+	state.sync_open = -1
 	load_settings()
 
 	listen_for_picker_result(app)
@@ -258,6 +306,46 @@ handle_worker_messages :: proc() {
 			}
 			free_pack_rows(state.results)
 			state.results, state.results_scroll = m.rows, 0
+		case Stick_Listed:
+			if m.stamp != state.stick_stamp {
+				stick_songs_destroy(m.songs)
+				continue
+			}
+			state.stick_listing = false
+			free_stick_rows()
+			state.stick_rows = make([]Stick_Row, len(m.songs))
+			for song, i in m.songs do state.stick_rows[i].song = song
+			delete(m.songs)
+			state.sync_open, state.sync_scroll = -1, 0
+		case Stick_Opened:
+			chart := m.chart
+			row := stick_row(m.index, m.stamp)
+			if row == nil {
+				stick_chart_destroy(&chart)
+				continue
+			}
+			row.opening = false
+			if chart.sm_id == "" do continue
+			row.chart, row.opened, row.wanted = chart, true, chart.offset
+		case Stick_Offset_Written:
+			row := stick_row(m.index, m.stamp)
+			if row == nil do continue
+			if m.ok {
+				row.chart.offset = m.offset
+				row.chart.has_backup = true
+			} else {
+				row.wanted = row.chart.offset // show what the stick really has
+			}
+		case Stick_Reset_Done:
+			row := stick_row(m.index, m.stamp)
+			if row == nil || !m.ok do continue
+			row.chart.offset, row.chart.original, row.wanted = m.original, m.original, m.original
+			row.chart.has_backup = false
+		case Stick_Measured:
+			row := stick_row(m.index, m.stamp)
+			if row == nil do continue
+			row.measuring = false
+			row.sync = m.sync
 		}
 	}
 	request_draw()
@@ -270,6 +358,40 @@ on_tap :: proc(app: ^glue.android_app, x, y: int) {
 		switch target in hit.target {
 		case Show_Page:
 			state.page = target.page
+			if state.page == .Sync do list_stick() // the stick may have changed (copies, the PC)
+		case Reload_Stick:
+			list_stick()
+		case Stick_Song_Tap:
+			state.sync_open = -1 if state.sync_open == target.index else target.index
+			row := &state.stick_rows[target.index]
+			if state.sync_open >= 0 && !row.opened && !row.opening {
+				row.opening = true
+				worker_ask(Open_Stick_Song{index = target.index, stamp = state.stick_stamp, tree = strings.clone(state.folder), folder_id = strings.clone(row.song.folder_id)})
+			}
+		case Pick_Sync_Step:
+			state.sync_step = target.step
+			save_settings()
+		case Nudge_Notes:
+			row := open_stick_row()
+			if row == nil do return
+			// A note's time is its beat's time minus #OFFSET: a bigger #OFFSET brings the notes earlier.
+			step := SYNC_STEPS[state.sync_step]
+			row.wanted = math.round((row.wanted + (step if target.earlier else -step)) * 10_000) / 10_000
+			worker_ask(Set_Stick_Offset{index = state.sync_open, stamp = state.stick_stamp, tree = strings.clone(state.folder), sm_id = strings.clone(row.chart.sm_id), offset = row.wanted})
+		case Measure_Stick:
+			row := open_stick_row()
+			if row == nil || row.measuring do return
+			if !row.chart.music_ogg {
+				say(.Bad, "ONLY OGG AUDIO CAN BE MEASURED.", "THIS SONG'S AUDIO IS MISSING OR NOT AN OGG.")
+				return
+			}
+			row.measuring = true
+			say(.Waiting, "MEASURING THE SYNC ...", "READING THE SONG FROM THE STICK TAKES A FEW SECONDS.")
+			worker_ask(Measure_Stick_Song{index = state.sync_open, stamp = state.stick_stamp, tree = strings.clone(state.folder), sm_id = strings.clone(row.chart.sm_id), music_id = strings.clone(row.chart.music_id)})
+		case Reset_Stick:
+			row := open_stick_row()
+			if row == nil || !row.chart.has_backup do return
+			worker_ask(Reset_Stick_Song{index = state.sync_open, stamp = state.stick_stamp, tree = strings.clone(state.folder), sm_id = strings.clone(row.chart.sm_id)})
 		case Pick_Search_Kind:
 			state.search_kind = target.kind
 			if state.search_kind == .Pack_Name || state.query != "" do search_now()
@@ -406,8 +528,9 @@ Setting :: struct {
 	min, max: int,
 }
 
-settings_table :: proc() -> [3]Setting {
+settings_table :: proc() -> [4]Setting {
 	return {
+		{key = "sync_step",         value = &state.sync_step,    default = 1,                   min = 0,               max = len(SYNC_STEPS) - 1},
 		{key = "audio_limit_bytes", value = &state.audio_limit,  default = DEFAULT_AUDIO_LIMIT, min = AUDIO_LIMIT_MIN, max = AUDIO_LIMIT_MAX},
 		{key = "length_patch",      value = &state.length_patch, default = 1,                   min = 0,               max = 1},
 		{key = "pack_id",           value = &state.pack_id,      default = 0,                   min = 0,               max = max(int)},
@@ -439,6 +562,38 @@ save_settings :: proc() {
 
 saved_folder_path :: proc() -> string {
 	return fmt.tprintf("%s/%s", state.private_dir, SAVED_FOLDER_FILE)
+}
+
+list_stick :: proc() {
+	if !state.folder_ok {
+		say(.Bad, "PICK THE STICK FOLDER FIRST (THE STICK ROW ON SONGS).")
+		return
+	}
+	state.stick_stamp += 1
+	state.stick_listing = true
+	worker_ask(List_Stick{tree = strings.clone(state.folder), stamp = state.stick_stamp})
+}
+
+// The stick row an answer is about, or nil when the list has changed since it was asked.
+stick_row :: proc(index, stamp: int) -> ^Stick_Row {
+	if stamp != state.stick_stamp || index < 0 || index >= len(state.stick_rows) do return nil
+	return &state.stick_rows[index]
+}
+
+open_stick_row :: proc() -> ^Stick_Row {
+	if state.sync_open < 0 || state.sync_open >= len(state.stick_rows) do return nil
+	row := &state.stick_rows[state.sync_open]
+	return row if row.opened else nil
+}
+
+free_stick_rows :: proc() {
+	for &row in state.stick_rows {
+		delete(row.song.name)
+		delete(row.song.folder_id)
+		stick_chart_destroy(&row.chart)
+	}
+	delete(state.stick_rows)
+	state.stick_rows = nil
 }
 
 request_draw :: proc() {
@@ -489,7 +644,8 @@ on_input_event :: proc(app: ^glue.android_app, event: ^android.AInputEvent) -> i
 	case .MOVE:
 		if abs(y - state.touch_start_y) > drag_threshold do state.dragging = true
 		if state.dragging {
-			list_scroll := &state.scroll if state.page == .Songs else &state.results_scroll
+			scrolls := [Page]^int{.Packs = &state.results_scroll, .Songs = &state.scroll, .Sync = &state.sync_scroll}
+			list_scroll := scrolls[state.page]
 			list_scroll^ -= int(y - state.touch_last_y)
 			state.touch_last_y = y
 			request_draw()

@@ -84,6 +84,15 @@ synthetic_notes_early :: proc(t: ^testing.T) {
 }
 
 @(test)
+offsets_written_like_stepmania :: proc(t: ^testing.T) {
+	testing.expect_value(t, format_offset(0.161), "0.161")
+	testing.expect_value(t, format_offset(-4.888), "-4.888")
+	testing.expect_value(t, format_offset(0.1615), "0.1615")
+	testing.expect_value(t, format_offset(0.161 - 0.009), "0.152")
+	testing.expect_value(t, format_offset(-0.00004), "0.000")
+}
+
+@(test)
 timing_with_tempo_changes_and_stops :: proc(t: ^testing.T) {
 	sm := "#OFFSET:0.5;\n#BPMS:0=120,4=60;\n#STOPS:2=0.25;\n"
 	timing, ok := read_timing(sm)

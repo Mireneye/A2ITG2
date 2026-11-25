@@ -100,6 +100,7 @@ draw :: proc(app: ^glue.android_app) {
 	switch state.page {
 	case .Packs: draw_packs_page(l)
 	case .Songs: draw_songs_page(l)
+	case .Sync:  draw_sync_page(l)
 	}
 	fill_rect(l.canvas, 0, l.bottom, l.canvas.width, l.canvas.height - l.bottom, COLOR_BACKGROUND) // under the navigation bar
 
@@ -108,7 +109,7 @@ draw :: proc(app: ^glue.android_app) {
 	fill_rect(l.canvas, 0, 0, l.canvas.width, strip_height, strip_color[state.mood])
 	draw_lines(l.canvas, state.lines[:], l.scale, status_top, STATUS_ROWS)
 
-	tab_labels := [len(Page)]string{"PACKS", "SONGS"}
+	tab_labels := [len(Page)]string{"PACKS", "SONGS", "SYNC"}
 	draw_buttons(l, tabs_top, tab_labels[:], int(state.page), proc(i: int) -> Tap_Target { return Show_Page{page = Page(i)} })
 }
 
@@ -240,6 +241,106 @@ draw_songs_page :: proc(l: Layout) {
 	} else {
 		draw_two_lines(l, pack_top, strings.to_upper(state.pack_name, context.temp_allocator), fmt.tprintf("#%d  TAP TO RELOAD", state.pack_id), COLOR_TEXT, COLOR_DIM)
 		append(&state.hits, Hit{top = pack_top, bottom = pack_top + l.list_row, target = Reload_Pack{}})
+	}
+}
+
+// The SYNC page: the stick's songs; the open one shows its #OFFSET and the controls under it.
+@(private = "file")
+draw_sync_page :: proc(l: Layout) {
+	canvas, row, scale := l.canvas, l.row, l.scale
+	header_top := l.top
+	list_top := header_top + row + scale
+	text_height := CELL_HEIGHT * scale
+	panel_height := 3 * text_height + 3 * row + 2 * scale
+
+	list_height := len(state.stick_rows) * l.list_row
+	if state.sync_open >= 0 do list_height += panel_height
+	state.sync_scroll = clamp(state.sync_scroll, 0, max(list_height - (l.bottom - list_top), 0))
+	row_top := list_top - state.sync_scroll
+	for &song, i in state.stick_rows {
+		top := row_top
+		open := i == state.sync_open
+		height := l.list_row + (panel_height if open else 0)
+		row_top += height
+		if top + height <= list_top || top >= l.bottom do continue
+		fill_rect(canvas, 0, top, canvas.width, height, u32(COLOR_ROW_ALT) if i % 2 == 1 else u32(COLOR_BACKGROUND))
+		if open do fill_rect(canvas, 0, top, canvas.width, l.list_row, COLOR_HIGHLIGHT)
+
+		details: string
+		switch {
+		case song.opening:   details = "READING THE CHART ..."
+		case !song.opened:   details = "TAP TO OPEN"
+		case:                details = fmt.tprintf("%s  %s", format_offset(song.wanted), moved_text(&song))
+		}
+		draw_two_lines(l, top, strings.to_upper(song.song.name, context.temp_allocator), details, COLOR_TEXT, COLOR_DIM)
+		append(&state.hits, Hit{top = max(top, list_top), bottom = min(top + l.list_row, l.bottom), target = Stick_Song_Tap{index = i}})
+		if open && song.opened do draw_sync_panel(l, top + l.list_row + scale, list_top, &song)
+	}
+	if len(state.stick_rows) == 0 {
+		message := "READING THE STICK ..." if state.stick_listing else "NO SONG FOLDERS HERE." if state.folder_ok else "PICK THE STICK ON SONGS."
+		draw_text(canvas, message, MARGIN_CELLS * CELL_WIDTH * scale, list_top + 3 * scale, scale, COLOR_DIM)
+	}
+	fill_rect(canvas, 0, l.top, canvas.width, list_top - l.top, COLOR_BACKGROUND)
+
+	fill_rect(canvas, 0, header_top, canvas.width, row - scale, COLOR_HEADER)
+	draw_line(l, header_top, row - scale, fmt.tprintf("%d SONGS  TAP TO RELOAD", len(state.stick_rows)), COLOR_TEXT)
+	append(&state.hits, Hit{top = header_top, bottom = header_top + row, target = Reload_Stick{}})
+}
+
+// "AS ORIGINAL", or how far the notes have moved from the original chart.
+@(private = "file")
+moved_text :: proc(song: ^Stick_Row) -> string {
+	moved_ms := (song.wanted - song.chart.original) * 1000
+	if abs(moved_ms) < 0.05 do return "AS ORIGINAL"
+	return fmt.tprintf("%.1f MS %s", abs(moved_ms), "EARLIER" if moved_ms > 0 else "LATER")
+}
+
+@(private = "file")
+draw_sync_panel :: proc(l: Layout, top, list_top: int, song: ^Stick_Row) {
+	canvas, row, scale := l.canvas, l.row, l.scale
+	text_height := CELL_HEIGHT * scale
+	margin := (MARGIN_CELLS + 2) * CELL_WIDTH * scale
+
+	draw_text(canvas, fit(fmt.tprintf("ORIGINAL %s", format_offset(song.chart.original)), l.columns - 2), margin, top, scale, COLOR_DIM)
+	measured: string
+	color := u32(COLOR_DIM)
+	switch {
+	case song.measuring:                        measured = "MEASURING ..."
+	case song.sync.state == .Unsure:            measured = "MEASURED: UNSURE"
+	case song.sync.state == .Measured:
+		// What's left of the measured shift after the nudges since.
+		left := song.sync.shift_ms + (song.wanted - song.sync.offset) * 1000
+		measured = "MEASURED: ON THE MUSIC" if abs(left) < 0.5 else fmt.tprintf("MEASURED: %.1f MS %s", abs(left), "EARLY" if left > 0 else "LATE")
+		color = COLOR_TEXT
+	case:                                       measured = "NOT MEASURED YET"
+	}
+	draw_text(canvas, fit(measured, l.columns - 2), margin, top + text_height, scale, color)
+
+	buttons_top := top + 3 * text_height
+	step_labels: [len(SYNC_STEPS)]string
+	for label, i in SYNC_STEP_LABELS do step_labels[i] = label
+	panel_buttons(l, buttons_top, list_top, step_labels[:], state.sync_step, proc(i: int) -> Tap_Target { return Pick_Sync_Step{step = i} })
+	nudge_labels := [2]string{"NOTES EARLIER", "NOTES LATER"}
+	panel_buttons(l, buttons_top + row, list_top, nudge_labels[:], -1, proc(i: int) -> Tap_Target { return Nudge_Notes{earlier = i == 0} })
+	tool_labels := [2]string{"MEASURE", "RESET" if song.chart.has_backup else "NO CHANGES"}
+	panel_buttons(l, buttons_top + 2 * row, list_top, tool_labels[:], -1, proc(i: int) -> Tap_Target {
+		if i == 0 do return Measure_Stick{}
+		return Reset_Stick{}
+	})
+}
+
+// Buttons inside the scrolling list: tappable only while wholly in view.
+@(private = "file")
+panel_buttons :: proc(l: Layout, top, list_top: int, labels: []string, chosen: int, target_of: proc(i: int) -> Tap_Target) {
+	width := l.canvas.width / len(labels)
+	visible := top >= list_top && top + l.row <= l.bottom
+	for label, i in labels {
+		left := i * width
+		lit := i == chosen
+		fill_rect(l.canvas, left + 2 * l.scale, top + l.scale, width - 4 * l.scale, l.row - 3 * l.scale, COLOR_ACTIVE if lit else COLOR_KEY)
+		label_y := top + (l.row - l.scale - GLYPH_HEIGHT * l.scale) / 2
+		draw_text(l.canvas, label, left + (width - len(label) * CELL_WIDTH * l.scale) / 2, label_y, l.scale, COLOR_TEXT)
+		if visible do append(&state.hits, Hit{top = top, bottom = top + l.row, left = left, right = left + width, target = target_of(i)})
 	}
 }
 

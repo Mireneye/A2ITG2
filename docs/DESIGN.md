@@ -118,3 +118,14 @@ On a PC it takes 0.6 s per song, decoding included; spacing windows half as far 
 would fit): the sync is the user's to change. Tests: the click track measures 0 and +9 ms when moved; the
 four songs (the user's own files in the git-ignored `tests/fixtures/sync/`, skipped when missing) measure
 under 6 ms, and each chart against another song's audio comes out Unsure.
+
+**Changing a song's sync (SYNC page).** Only the chart's `#OFFSET` changes; the audio is never touched, so
+tempo changes and stops in the chart stay where they are. The page lists the song folders in the stick
+folder; an opened song shows its `#OFFSET` and how far the notes have moved from the original. NOTES
+EARLIER raises `#OFFSET` by the chosen step (0.1, 1, 10 or 100 ms), NOTES LATER lowers it; each change is
+written to the stick at once (only the newest of quick taps, since the stick is slow) and fsynced. Four
+decimals are written only when a tenth of a millisecond is used. Before a chart is first changed the whole
+original `.sm` is kept in the app's private folder (`sync_backups/`, named by a hash of the stick folder and
+the chart's document id); RESET writes it back and drops it. MEASURE reads the song's Ogg from the stick (a
+few seconds over USB 1.1) and measures it as on copying; after nudges, the page shows what is left of the
+measured difference. No cabinet-wide offset setting: the cab-perfect songs say this cabinet wants 0.
