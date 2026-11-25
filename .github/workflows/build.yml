@@ -83,6 +83,7 @@ jobs:
           ~/odin/odin test src/tls
           ~/odin/odin test src/audio
           ~/odin/odin test src/chart
+          ~/odin/odin test src/metronome
 
       - name: Build APK
         run: |

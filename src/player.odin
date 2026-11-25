@@ -13,15 +13,15 @@ ring of PLAYER_RING_FRAMES; AAudio's callback takes from the ring on Android's a
 silence if the ring runs dry. The thread skips to `from_seconds` by decoding and dropping, so the start
 is on the exact sample. Pausing stops AAudio; the thread waits while the ring is full.
 
-The metronome is mixed in by the callback, from the song's own sample count: a click at every beat
-of the chart (its time at #OFFSET 0, less the offset), a higher one starting each measure. Music and
+The metronome (src/metronome) is mixed in by the callback, from the song's own sample count: a click
+at every beat of the chart (its time at #OFFSET 0, less the offset), a higher one starting each
+measure, the music dipping under each click so it can be heard over a loud mix. Music and
 clicks leave through the same stream, so the phone's output delay moves both alike: what is heard is
 the chart's timing against the music, as the cabinet would play it.
 */
 package a2itg2
 
 import "base:intrinsics"
-import "core:math"
 import "core:thread"
 import "core:time"
 import "core:sys/android"
@@ -29,13 +29,10 @@ import glue "core:sys/android/native_app_glue"
 import aaudio "vendor:android/aaudio"
 import "audio"
 import "chart"
+import "metronome"
 
 PLAYER_RING_FRAMES :: 32 * 1024 // 0.74 s at 44.1 kHz: room for the decoder to fall behind now and then
 PLAYER_MAX_CHANNELS :: 2
-CLICK_FRAMES        :: 1200 // the longest click, 27 ms at 44.1 kHz
-CLICK_HZ            :: 1600
-DOWNBEAT_HZ         :: 2400
-CLICK_LOUDNESS      :: 0.5
 
 @(private = "file")
 Player :: struct {
@@ -48,7 +45,7 @@ Player :: struct {
 	start_frame: i64, // the song's sample frame the ring starts at
 	offset_bits: u64, // the #OFFSET the clicks follow, as the f64's bits (set from the app's loop)
 	clicks:   bool,
-	click:    [2][CLICK_FRAMES]f32, // beat, downbeat
+	metronome: metronome.Metronome,
 	channels: int,
 	rate:     int,
 	ring:     []f32, // PLAYER_RING_FRAMES * channels
@@ -102,14 +99,7 @@ player_play :: proc(preview: Preview, clicks: bool) -> string {
 	player = Player{stream = stream, bytes = bytes, ticks = ticks, format = format, from = from_seconds, channels = channels, rate = rate, clicks = clicks}
 	player.start_frame = i64(max(from_seconds, 0) * f64(rate))
 	player.offset_bits = transmute(u64)preview.offset
-	for &click, kind in player.click {
-		// A short tone that fades out fast: easy to place against a drum hit.
-		hz := f64(DOWNBEAT_HZ if kind == 1 else CLICK_HZ)
-		for &sample, i in click {
-			t := f64(i) / f64(rate)
-			sample = f32(CLICK_LOUDNESS * math.sin(2 * math.PI * hz * t) * math.exp(-t / 0.004))
-		}
-	}
+	player.metronome = metronome.metronome_make(ticks, rate)
 	handed_over = true
 	player.ring = make([]f32, PLAYER_RING_FRAMES * channels)
 	player.worker = thread.create_and_start(decode_thread)
@@ -206,7 +196,10 @@ fill_callback :: proc "c" (stream: ^aaudio.AAudioStream, user_data: rawptr, audi
 		for c in 0..<channels do out[i * channels + c] = player.ring[at + c]
 	}
 	for i in count * channels..<len(out) do out[i] = 0
-	if count > 0 && intrinsics.atomic_load_explicit(&player.clicks, .Relaxed) do mix_clicks(out, i64(read), count)
+	if count > 0 && intrinsics.atomic_load_explicit(&player.clicks, .Relaxed) {
+		offset := transmute(f64)intrinsics.atomic_load_explicit(&player.offset_bits, .Relaxed)
+		metronome.mix(&player.metronome, out[:count * channels], channels, player.start_frame + i64(read), offset)
+	}
 	intrinsics.atomic_store_explicit(&player.read, read + u64(count), .Seq_Cst)
 	if count == 0 && intrinsics.atomic_load_explicit(&player.decoded, .Seq_Cst) && !intrinsics.atomic_load_explicit(&player.finished, .Relaxed) {
 		intrinsics.atomic_store_explicit(&player.finished, true, .Release)
@@ -215,36 +208,3 @@ fill_callback :: proc "c" (stream: ^aaudio.AAudioStream, user_data: rawptr, audi
 	return .CONTINUE
 }
 
-// Adds the clicks that sound during these `count` frames, which start `played` frames into the ring.
-@(private = "file")
-mix_clicks :: proc "contextless" (out: []f32, played: i64, count: int) {
-	if len(player.ticks) == 0 do return
-	offset := transmute(f64)intrinsics.atomic_load_explicit(&player.offset_bits, .Relaxed)
-	rate := f64(player.rate)
-	first := player.start_frame + played // the song's frame at out[0]
-	last := first + i64(count)
-	click_frame :: proc "contextless" (tick: chart.Tick, offset, rate: f64) -> i64 {
-		return i64(math.round((tick.seconds - offset) * rate))
-	}
-	// The first tick whose click is still sounding at `first`.
-	low, high := 0, len(player.ticks)
-	for low < high {
-		middle := (low + high) / 2
-		if click_frame(player.ticks[middle], offset, rate) + CLICK_FRAMES <= first {
-			low = middle + 1
-		} else {
-			high = middle
-		}
-	}
-	channels := player.channels
-	for tick in player.ticks[low:] {
-		start := click_frame(tick, offset, rate)
-		if start >= last do break
-		click := &player.click[1 if tick.downbeat else 0]
-		for frame in max(start, first)..<min(start + CLICK_FRAMES, last) {
-			value := click[frame - start]
-			at := int(frame - first) * channels
-			for c in 0..<channels do out[at + c] = clamp(out[at + c] + value, -1, 1)
-		}
-	}
-}

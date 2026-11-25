@@ -359,8 +359,9 @@ draw_sync_panel :: proc(l: Layout, top, list_top: int, song: ^Stick_Row) {
 	panel_buttons(l, buttons_top, list_top, step_labels[:], state.sync_step, proc(i: int) -> Tap_Target { return Pick_Sync_Step{step = i} })
 	nudge_labels := [2]string{"NOTES EARLIER", "NOTES LATER"}
 	panel_buttons(l, buttons_top + row, list_top, nudge_labels[:], -1, proc(i: int) -> Tap_Target { return Nudge_Notes{earlier = i == 0} })
-	tool_labels := [3]string{"MEASURE", "RESET" if song.chart.has_backup else "NO CHANGES", "CLICKS ON" if state.metronome == 1 else "CLICKS OFF"}
-	panel_buttons(l, buttons_top + 2 * row, list_top, tool_labels[:], 2 if state.metronome == 1 else -1, proc(i: int) -> Tap_Target {
+	// Short labels: three to a row fit 9 letters. RESET is dim with nothing to undo, CLICKS lit when on.
+	tool_labels := [3]string{"MEASURE", "RESET", "CLICKS"}
+	panel_buttons(l, buttons_top + 2 * row, list_top, tool_labels[:], 2 if state.metronome == 1 else -1, dim = -1 if song.chart.has_backup else 1, target_of = proc(i: int) -> Tap_Target {
 		switch i {
 		case 0: return Measure_Stick{}
 		case 1: return Reset_Stick{}
@@ -371,7 +372,7 @@ draw_sync_panel :: proc(l: Layout, top, list_top: int, song: ^Stick_Row) {
 
 // Buttons inside the scrolling list: tappable only while wholly in view.
 @(private = "file")
-panel_buttons :: proc(l: Layout, top, list_top: int, labels: []string, chosen: int, target_of: proc(i: int) -> Tap_Target) {
+panel_buttons :: proc(l: Layout, top, list_top: int, labels: []string, chosen: int, target_of: proc(i: int) -> Tap_Target, dim := -1) {
 	width := l.canvas.width / len(labels)
 	visible := top >= list_top && top + l.row <= l.bottom
 	for label, i in labels {
@@ -379,7 +380,7 @@ panel_buttons :: proc(l: Layout, top, list_top: int, labels: []string, chosen: i
 		lit := i == chosen
 		fill_rect(l.canvas, left + 2 * l.scale, top + l.scale, width - 4 * l.scale, l.row - 3 * l.scale, COLOR_ACTIVE if lit else COLOR_KEY)
 		label_y := top + (l.row - l.scale - GLYPH_HEIGHT * l.scale) / 2
-		draw_text(l.canvas, label, left + (width - len(label) * CELL_WIDTH * l.scale) / 2, label_y, l.scale, COLOR_TEXT)
+		draw_text(l.canvas, label, left + (width - len(label) * CELL_WIDTH * l.scale) / 2, label_y, l.scale, COLOR_DIM if i == dim else COLOR_TEXT)
 		if visible do append(&state.hits, Hit{top = top, bottom = top + l.row, left = left, right = left + width, target = target_of(i)})
 	}
 }
