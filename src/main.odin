@@ -61,7 +61,7 @@ Page :: enum u8 {
 
 Tap_Target :: union {
 	Show_Page,
-	Cycle_Search_Kind,
+	Pick_Search_Kind,
 	Edit_Query,
 	Pack_Tap,
 	Change_Folder,
@@ -72,7 +72,7 @@ Tap_Target :: union {
 	Song_Tap,
 }
 Show_Page         :: struct { page: Page }
-Cycle_Search_Kind :: struct {}
+Pick_Search_Kind  :: struct { kind: Search_Kind }
 Pack_Tap          :: struct { index: int }
 Edit_Query        :: struct {}
 Change_Folder    :: struct {}
@@ -111,6 +111,8 @@ App_State :: struct {
 
 	pack_id:       int, // 0: none opened yet
 	pack_name:     string,
+	wanted_song:   string, // a song picked in the search results: highlighted once its pack is read (heap)
+	highlight:     int,    // the song row to highlight, or -1
 	songs:         []Song_Row,
 	copying:       int, // the song being copied, or -1
 	progress:      Copy_Progress,
@@ -134,6 +136,7 @@ main :: proc() {
 
 	state.private_dir = strings.clone_from_cstring(app.activity.internalDataPath)
 	state.copying = -1
+	state.highlight = -1
 	load_settings()
 
 	listen_for_picker_result(app)
@@ -214,6 +217,7 @@ handle_worker_messages :: proc() {
 		case Pack_Ready:
 			free_song_rows()
 			state.pack_id, state.pack_name, state.songs = m.id, m.name, m.rows
+			find_wanted_song()
 			state.scroll = 0
 		case Copy_Progress:
 			state.progress = m
@@ -237,9 +241,9 @@ on_tap :: proc(app: ^glue.android_app, x, y: int) {
 		switch target in hit.target {
 		case Show_Page:
 			state.page = target.page
-		case Cycle_Search_Kind:
-			state.search_kind = Search_Kind((int(state.search_kind) + 1) % len(Search_Kind))
-			if state.search_kind == .Pack_Name do search_now()
+		case Pick_Search_Kind:
+			state.search_kind = target.kind
+			if state.search_kind == .Pack_Name || state.query != "" do search_now()
 		case Edit_Query:
 			if state.typing do return
 			if err := open_text_input(app, fmt.tprintf("Search by %s", strings.to_lower(SEARCH_KIND_LABEL[state.search_kind], context.temp_allocator)), state.query); err != "" {
@@ -257,6 +261,8 @@ on_tap :: proc(app: ^glue.android_app, x, y: int) {
 			save_settings()
 			free_song_rows()
 			state.pack_name = strings.clone(row.name)
+			delete(state.wanted_song)
+			state.wanted_song = strings.clone(row.matched)
 			state.page = .Songs
 			worker_ask(Open_Pack{id = row.id})
 		case Audio_Limit_Down:
@@ -329,6 +335,24 @@ free_pack_rows :: proc(rows: []Pack_Row) {
 		delete(row.matched)
 	}
 	delete(rows)
+}
+
+// After a song search: the picked song's row, if a folder is named like it (folders usually carry the
+// song's title, though not always). Scrolled to the top of the list and highlighted.
+find_wanted_song :: proc() {
+	state.highlight = -1
+	if state.wanted_song == "" do return
+	wanted := strings.to_lower(state.wanted_song, context.temp_allocator)
+	for row, i in state.songs {
+		name := strings.to_lower(row.name, context.temp_allocator)
+		if name == wanted || strings.contains(name, wanted) || strings.contains(wanted, name) {
+			state.highlight = i
+			state.scroll = i * song_row_height(glue.app())
+			break
+		}
+	}
+	delete(state.wanted_song)
+	state.wanted_song = ""
 }
 
 free_song_rows :: proc() {
@@ -418,7 +442,7 @@ on_input_event :: proc(app: ^glue.android_app, event: ^android.AInputEvent) -> i
 		return 0 // Back and other keys keep their usual behaviour.
 	}
 	y := android.AMotionEvent_getY(event, 0)
-	drag_threshold := f32(row_height(app)) / 3
+	drag_threshold := f32(row_height(app)) / 3 // a finger moving this far is dragging, not tapping
 
 	#partial switch android.AMotionEvent_getAction(event).action {
 	case .DOWN:

@@ -196,7 +196,7 @@ do_search :: proc(job: Search_Packs) {
 		say_from_worker(.Bad, problem.what, problem.why)
 		return
 	}
-	if job.kind != .Pack_Name && strings.trim_space(job.query) != "" do say_from_worker(.Good, fmt.tprintf("%d PACKS FOUND%s.", len(rows), " (THE FIRST 200)" if len(rows) == MAX_RESULTS else ""))
+	if job.kind != .Pack_Name && strings.trim_space(job.query) != "" do say_from_worker(.Good, fmt.tprintf("%d SONGS FOUND%s. TAP ONE TO OPEN ITS PACK.", len(rows), " (THE FIRST 200)" if len(rows) == MAX_RESULTS else ""))
 }
 
 @(private = "file")

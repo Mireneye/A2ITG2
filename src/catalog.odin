@@ -74,7 +74,7 @@ Pack_Row :: struct {
 	songs:    int,
 	bytes:    i64,      // -1 when the catalog doesn't know the pack
 	needs_sm5: bool,    // made for StepMania 5: charts may be .ssc only, which ITG2 can't read
-	matched:  string,   // for song searches: the first matching song's title, else ""
+	matched:  string,   // for song searches: the matching song's title (one row per song), else ""
 }
 
 // Fresh from the private folder when it's under a day old, else from the site (and saved).
@@ -173,12 +173,15 @@ search_packs :: proc(anchors: ^tls.Trust_Anchors, catalog: ^Catalog, kind: Searc
 	}
 	answer: Answer
 	if json.unmarshal(body, &answer, allocator = context.temp_allocator) != nil do return found[:], {"THE SITE'S ANSWER WAS UNREADABLE", ""}
-	for result in answer.results[:min(len(answer.results), MAX_RESULTS)] {
-		matched := result.matching_songs[0] if len(result.matching_songs) > 0 else ""
-		if at, known := catalog.by_id[result.id]; known {
-			append(&found, row_of(catalog.packs[at], matched))
-		} else {
-			append(&found, Pack_Row{id = result.id, name = strings.clone(result.name), songs = result.songs_count, bytes = -1, matched = strings.clone(matched)})
+	// One row per matching song, its pack named above it.
+	outer: for result in answer.results {
+		for song in result.matching_songs {
+			if len(found) == MAX_RESULTS do break outer
+			if at, known := catalog.by_id[result.id]; known {
+				append(&found, row_of(catalog.packs[at], song))
+			} else {
+				append(&found, Pack_Row{id = result.id, name = strings.clone(result.name), songs = result.songs_count, bytes = -1, matched = strings.clone(song)})
+			}
 		}
 	}
 	return found[:], {}

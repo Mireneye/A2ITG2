@@ -41,20 +41,22 @@ Then:
 
 **PACKS page**: find a pack.
 1. With nothing typed, the newest packs on the site are listed.
-2. **SEARCH BY** (tap to cycle): pack name, song title, artist, chart author. Tap the search text to type: Android's
+2. Pick what to search by: **PACK**, **TITLE**, **ARTIST** or **AUTHOR**. Tap the search text to type: Android's
    own keyboard comes up in a small dialog. Pack names are searched as you type; the others ask the site when you
-   tap **Search** (about 3 seconds). Results show each pack's size; `SM5` marks
-   packs made for StepMania 5, whose charts may be `.ssc` only (ITG2 reads `.sm`).
-3. Tap a pack to open it on the SONGS page. The app remembers it.
+   tap **Search** (about 3 seconds).
+3. Pack results show each pack's size and song count; `SM5` marks packs made for StepMania 5, whose charts may be
+   `.ssc` only (ITG2 reads `.sm`). Song results show one song per row, under the name of its pack.
+4. Tap a result to open its pack on the SONGS page (a picked song is highlighted there). The app remembers the pack.
 
 **SONGS page**: copy songs.
 1. Plug the stick into the phone. Tap **STICK** and pick the folder songs should go in: on a stick the cabinet has
    used, its "In The Groove 2" folder's Songs folder. The app remembers it.
-2. **AUDIO LIMIT** is the most a song's Ogg may take; tap - or + (0.1 MB steps). MP3s are converted to the best
+2. **MAX AUDIO** is the most a song's Ogg may take; tap - or + (0.1 MB steps). MP3s are converted to the best
    quality that fits; an Ogg over the limit is re-encoded smaller (Oggs that fit are copied untouched).
-3. **LENGTH PATCH** (on by default): songs over 1:45 get the Ogg length patch, so an r21 cabinet reads them as 1:45
-   and plays all of them. Tap to switch it off. (r23 cabinets cut custom songs at 2:00 regardless.)
-4. Tap a song. Its row fills as it copies: by files, then by percent while an MP3 becomes an Ogg (`CONVERTING 37%`) or a big Ogg is made smaller (`SHRINKING 37%`;
-   `SMALLER .. (TRY 2)` if the first try came out over the limit). The top strip turns green with `SAFE TO UNPLUG`.
+3. **LENGTH PATCH** ON/OFF (on by default): songs over 1:45 get the Ogg length patch, so an r21 cabinet reads them
+   as 1:45 and plays all of them. (r23 cabinets cut custom songs at 2:00 regardless.)
+4. Tap a song. Its row fills as it copies: by files, then by percent while an MP3 becomes an Ogg (`CONVERTING TO OGG
+   37%`) or a big Ogg is made smaller (`SHRINKING THE OGG 37%`; `SMALLER .. (TRY 2)` if the first try came out over
+   the limit). The top strip turns green with `SAFE TO UNPLUG`.
 
 Blue strip: working. Green: done. Red: a step failed, and the text says which and why.
