@@ -382,16 +382,7 @@ ogg_name_for :: proc(pack: ^Pack, song: Song, mp3_name: string) -> string {
 }
 
 // The chart with `#TAG:value;` given a new value (the first one; tags in any letter case).
-replace_tag_value :: proc(chart, tag, value: string) -> string {
-	upper := strings.to_upper(chart, context.temp_allocator)
-	marker := fmt.tprintf("#%s:", tag)
-	at := strings.index(upper, marker)
-	if at < 0 do return chart
-	start := at + len(marker)
-	end := strings.index_byte(chart[start:], ';')
-	if end < 0 do return chart
-	return strings.concatenate({chart[:start], value, chart[start + end:]}, context.temp_allocator)
-}
+replace_tag_value :: chart.replace_tag_value
 
 Chart_Reference :: struct {
 	tag:  string, // upper case
@@ -399,19 +390,13 @@ Chart_Reference :: struct {
 }
 
 // The file names an .sm chart refers to. Tags are "#NAME:value;" in any letter case.
-chart_references :: proc(chart: string) -> [5]Chart_Reference {
+chart_references :: proc(text: string) -> [5]Chart_Reference {
 	TAGS :: [5]string{"MUSIC", "BANNER", "BACKGROUND", "CDTITLE", "LYRICSPATH"}
 	found: [5]Chart_Reference
-	upper := strings.to_upper(chart, context.temp_allocator) // same length: ASCII tags, offsets line up
 	for tag, i in TAGS {
 		found[i].tag = tag
-		marker := fmt.tprintf("#%s:", tag)
-		at := strings.index(upper, marker)
-		if at < 0 do continue
-		value := chart[at + len(marker):]
-		end := strings.index_byte(value, ';')
-		if end < 0 do continue
-		found[i].name = strings.trim_space(value[:end])
+		value, has := chart.tag_value(text, tag)
+		if has do found[i].name = strings.trim_space(value)
 	}
 	return found
 }
@@ -451,15 +436,9 @@ fallback_pick :: proc(names: []string) -> int {
 }
 
 // The chart with #MUSIC set to `name`, the tag added at the top if the chart has none.
-set_music :: proc(chart, name: string) -> string {
-	if _, found := chart_tag_index(chart, "MUSIC"); found do return replace_tag_value(chart, "MUSIC", name)
-	return strings.concatenate({"#MUSIC:", name, ";\n", chart}, context.temp_allocator)
-}
-
-@(private = "file")
-chart_tag_index :: proc(chart, tag: string) -> (at: int, found: bool) {
-	at = strings.index(strings.to_upper(chart, context.temp_allocator), fmt.tprintf("#%s:", tag))
-	return at, at >= 0
+set_music :: proc(text, name: string) -> string {
+	if chart.has_tag(text, "MUSIC") do return replace_tag_value(text, "MUSIC", name)
+	return strings.concatenate({"#MUSIC:", name, ";\n", text}, context.temp_allocator)
 }
 
 // The entry in the song's folder named `name` (FAT and Windows ignore letter case), or -1.

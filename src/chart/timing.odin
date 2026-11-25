@@ -184,11 +184,30 @@ tag_value :: proc(sm, tag: string) -> (value: string, found: bool) {
 	return sm[start:][:end], true
 }
 
+// The chart with the first `#TAG:value;` given a new value (temp memory); unchanged without the tag.
+replace_tag_value :: proc(sm, tag, value: string) -> string {
+	at := index_of_tag(sm, tag)
+	if at < 0 do return sm
+	start := at + len(tag) + 2
+	end := strings.index_byte(sm[start:], ';')
+	if end < 0 do return sm
+	return strings.concatenate({sm[:start], value, sm[start + end:]}, context.temp_allocator)
+}
+
+has_tag :: proc(sm, tag: string) -> bool {
+	return index_of_tag(sm, tag) >= 0
+}
+
+// Where "#TAG:" starts (any letter case), or -1. Compared byte by byte in the chart itself: charts are
+// often not valid UTF-8 (Latin-1 "²" is one byte), so searching a case-converted copy would put
+// positions off wherever the conversion changed a character's length.
 @(private = "file")
 index_of_tag :: proc(sm, tag: string) -> int {
-	for i := 0; i + len(tag) + 1 < len(sm); i += 1 {
-		if sm[i] != '#' do continue
-		if strings.equal_fold(sm[i + 1:][:len(tag)], tag) && sm[i + 1 + len(tag)] == ':' do return i
+	ascii_upper :: proc(c: u8) -> u8 { return c - 32 if c >= 'a' && c <= 'z' else c }
+	outer: for i := 0; i + len(tag) + 1 < len(sm); i += 1 {
+		if sm[i] != '#' || sm[i + 1 + len(tag)] != ':' do continue
+		for k in 0..<len(tag) do if ascii_upper(sm[i + 1 + k]) != ascii_upper(tag[k]) do continue outer
+		return i
 	}
 	return -1
 }

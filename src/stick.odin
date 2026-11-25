@@ -127,7 +127,6 @@ stick_set_offset :: proc(tree, sm_id: string, offset: f64) -> (problem: string) 
 	if read_problem != "" do return read_problem
 	defer delete(text)
 	if _, has_offset := chart_offset(string(text)); !has_offset {
-		// ZZ-Attention: diagnosing a second nudge failing here (Squaredance): what the stick gave back.
 		return fmt.tprintf("THE CHART HAS NO #OFFSET (READ %d BYTES: \"%s\")", len(text), printable_start(text))
 	}
 	if !has_backup(tree, sm_id) {

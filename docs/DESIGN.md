@@ -160,3 +160,11 @@ path field (0x7075) carries a UTF-8 copy matching the stored name's CRC. Otherwi
 which old Windows zippers wrote (`²` is the byte 0xFD); such names are decoded to UTF-8, unless they already
 read as valid UTF-8 (many tools write UTF-8 without the flag). Raw CP437 bytes would otherwise reach Android as
 broken names, failing folder and file creation and comparisons with the chart's tags.
+
+**Finding tags in a chart.** Charts are often not valid UTF-8 (a Latin-1 `²` is the single byte 0xB2).
+Tags are found byte by byte in the chart itself, comparing only the ASCII tag letters without regard to case
+(`chart.tag_value`, `chart.replace_tag_value`). An earlier version searched an upper-cased copy and used that
+position in the original; upper-casing turns an invalid byte into the 3-byte U+FFFD, so every tag after such a
+byte landed 2 bytes off: `#MUSIC` names were misread (songs reported as missing their audio) and rewritten
+values were put in the wrong place (`#OFFSET:-0-0.201;`). Every chart change on the stick is now also read back
+and compared with what was written.

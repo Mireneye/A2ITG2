@@ -172,3 +172,16 @@ wrong_audio_is_unsure :: proc(t: ^testing.T) {
 		testing.expect_value(t, m.state, audio.Match_State.Unsure)
 	}
 }
+
+@(test)
+tags_found_in_charts_that_are_not_utf8 :: proc(t: ^testing.T) {
+	// Latin-1 "²" (one byte, 0xB2) before the tags, as in a Squaredance chart that got corrupted.
+	sm := "#ARTIST:Kitsune\xB2;\n#music:Kitsune^2 Squaredance.ogg;\n#OFFSET:-0.200;\n"
+	music, _ := tag_value(sm, "MUSIC")
+	testing.expect_value(t, music, "Kitsune^2 Squaredance.ogg")
+	changed := sm
+	for value in ([?]string{"-0.201", "-0.202"}) do changed = replace_tag_value(changed, "OFFSET", value)
+	offset, _ := tag_value(changed, "OFFSET")
+	testing.expect_value(t, offset, "-0.202")
+	testing.expect_value(t, len(changed), len(sm))
+}
