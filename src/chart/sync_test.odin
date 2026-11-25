@@ -220,3 +220,13 @@ summaries_of_the_cab_songs :: proc(t: ^testing.T) {
 	testing.expect(t, ts.meters == {.Beginner = 1, .Easy = 4, .Medium = 8, .Hard = 11, .Challenge = 13}, "turii's meters")
 	testing.expect_value(t, ts.bpm_high, 148.0) // #DISPLAYBPM:148
 }
+
+@(test)
+old_difficulty_names :: proc(t: ^testing.T) {
+	for name in ([?]string{"basic", "light"}) { d, ok := difficulty_from_name(name); testing.expect(t, ok && d == .Easy) }
+	for name in ([?]string{"another", "trick", "standard", "difficult"}) { d, ok := difficulty_from_name(name); testing.expect(t, ok && d == .Medium) }
+	for name in ([?]string{"ssr", "maniac", "heavy"}) { d, ok := difficulty_from_name(name); testing.expect(t, ok && d == .Hard) }
+	for name in ([?]string{"expert", "smaniac", "oni"}) { d, ok := difficulty_from_name(name); testing.expect(t, ok && d == .Challenge) }
+	_, edit_known := difficulty_from_name("edit")
+	testing.expect(t, !edit_known)
+}

@@ -250,7 +250,6 @@ Summary :: struct {
 
 // dance-single only (the cabinet's mode); edits aren't listed, as the song wheel shows them apart.
 summary :: proc(sm: string, t: Timing) -> (s: Summary) {
-	DIFFICULTY_NAMES :: [Difficulty]string{.Beginner = "beginner", .Easy = "easy", .Medium = "medium", .Hard = "hard", .Challenge = "challenge"}
 	rest := sm
 	for {
 		at := index_of_tag(rest, "NOTES")
@@ -261,9 +260,8 @@ summary :: proc(sm: string, t: Timing) -> (s: Summary) {
 		fields := strings.split_n(block, ":", 6, context.temp_allocator)
 		if len(fields) == 6 && strings.trim_space(strip_comment_lines(fields[0])) == "dance-single" {
 			name := strings.to_lower(strings.trim_space(strip_comment_lines(fields[2])), context.temp_allocator)
-			if name == "expert" do name = "challenge" // an older name
 			meter, _ := strconv.parse_int(strings.trim_space(strip_comment_lines(fields[3])))
-			for difficulty_name, difficulty in DIFFICULTY_NAMES do if name == difficulty_name do s.meters[difficulty] = meter
+			if difficulty, known := difficulty_from_name(name); known do s.meters[difficulty] = meter
 		}
 		if end < 0 do break
 		rest = rest[end:]
@@ -297,4 +295,17 @@ strip_comment_lines :: proc(text: string) -> string {
 	rest := text
 	for line in strings.split_lines_iterator(&rest) do strings.write_string(&out, strip_comment(line))
 	return strings.to_string(out)
+}
+
+// A chart's difficulty name, the new ones and the older ones StepMania still reads (its
+// OldStyleStringToDifficulty, in Difficulty.cpp). Edits and unknown names: not known.
+difficulty_from_name :: proc(lower_name: string) -> (difficulty: Difficulty, known: bool) {
+	switch lower_name {
+	case "beginner":                                              return .Beginner, true
+	case "easy", "basic", "light":                                return .Easy, true
+	case "medium", "another", "trick", "standard", "difficult":   return .Medium, true
+	case "hard", "ssr", "maniac", "heavy":                        return .Hard, true
+	case "challenge", "expert", "smaniac", "oni":                 return .Challenge, true
+	}
+	return
 }
