@@ -302,14 +302,16 @@ draw_sync_page :: proc(l: Layout) {
 	draw_line(l, header_top, row - scale, fmt.tprintf("%d SONGS  TAP TO RELOAD", len(state.stick_rows)), COLOR_TEXT)
 	append(&state.hits, Hit{top = header_top, bottom = header_top + row, target = Reload_Stick{}})
 
-	// The metronome: its volume with - and +, and ON/OFF. Three buttons a sixth wide each leave the
-	// label 13 letters ("CLICKS 200%" is 11).
-	button_width := canvas.width / 6
+	// The metronome: its volume with - and +, and ON/OFF. Slim - and + (a fifteenth of the width each)
+	// leave the label plenty of room.
+	step_width := canvas.width / 15
+	switch_width := canvas.width / 6
+	switch_left := canvas.width - switch_width
 	fill_rect(canvas, 0, clicks_top, canvas.width, row - scale, COLOR_HEADER)
 	draw_line(l, clicks_top, row - scale, fmt.tprintf("CLICKS %d%%", state.click_volume), COLOR_TEXT)
-	draw_small_button(l, canvas.width - 3 * button_width, clicks_top, button_width, "-", true, Click_Volume{up = false})
-	draw_small_button(l, canvas.width - 2 * button_width, clicks_top, button_width, "+", true, Click_Volume{up = true})
-	draw_small_button(l, canvas.width - button_width, clicks_top, button_width, "ON" if state.metronome == 1 else "OFF", state.metronome == 1, Toggle_Clicks{})
+	draw_small_button(l, switch_left - 2 * step_width, clicks_top, step_width, "-", true, Click_Volume{up = false})
+	draw_small_button(l, switch_left - step_width, clicks_top, step_width, "+", true, Click_Volume{up = true})
+	draw_small_button(l, switch_left, clicks_top, switch_width, "ON" if state.metronome == 1 else "OFF", state.metronome == 1, Toggle_Clicks{})
 }
 
 // A song row's play button, a square at its right end; returns its left edge.
