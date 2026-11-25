@@ -129,3 +129,10 @@ original `.sm` is kept in the app's private folder (`sync_backups/`, named by a 
 the chart's document id); RESET writes it back and drops it. MEASURE reads the song's Ogg from the stick (a
 few seconds over USB 1.1) and measures it as on copying; after nudges, the page shows what is left of the
 measured difference. No cabinet-wide offset setting: the cab-perfect songs say this cabinet wants 0.
+
+**Previews.** The button at a song's right on SONGS downloads its chart and audio and plays the audio from
+the chart's `#SAMPLESTART`, the point the song wheel plays, until paused or the song ends. Decoding is the
+app's own (as the cabinet plays it), reaching the preview point by decoding and dropping, so it starts on the
+exact sample; a thread fills a 0.74 s ring that AAudio's callback plays from. The downloaded files stay in the
+app's `preview_cache/` (60 MB at most, oldest dropped first), and copying a song takes them from there: the
+preview is the download, the copy is the commit. The song pauses when the app leaves the screen.

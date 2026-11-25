@@ -194,18 +194,38 @@ draw_songs_page :: proc(l: Layout) {
 			if status.step == .Measuring do details = "CHECKING THE SYNC ..."
 			fill_rect(canvas, 0, top, int(f32(canvas.width) * fraction), l.list_row, COLOR_ACTIVE)
 		}
+		if i == state.preview_song {
+			#partial switch state.preview {
+			case .Fetching: details = "GETTING THE AUDIO ..."
+			case .Playing:  details = fmt.tprintf("PLAYING FROM %s", minutes(state.preview_start))
+			case .Paused:   details = "PAUSED"
+			}
+		}
+
+		// The play button: a square at the row's right end.
+		button_width := l.list_row
+		button_left := canvas.width - button_width
+		playing := i == state.preview_song && state.preview == .Playing
+		fill_rect(canvas, button_left + 2 * scale, top + 2 * scale, button_width - 4 * scale, l.list_row - 4 * scale, COLOR_ACTIVE if i == state.preview_song else COLOR_KEY)
+		symbol := "..." if i == state.preview_song && state.preview == .Fetching else string([]u8{GLYPH_PAUSE if playing else GLYPH_PLAY})
+		symbol_scale := scale * 2 if len(symbol) == 1 else scale
+		draw_text(canvas, symbol, button_left + (button_width - len(symbol) * CELL_WIDTH * symbol_scale) / 2, top + (l.list_row - GLYPH_HEIGHT * symbol_scale) / 2, symbol_scale, COLOR_TEXT)
+		button_columns := button_width / (CELL_WIDTH * scale)
+
 		mark := sync_mark(song.sync) if i != state.copying else ""
 		mark_width := (len(mark) + 2) * CELL_WIDTH * scale if mark != "" else 0
-		draw_two_lines(l, top, strings.to_upper(song.name, context.temp_allocator), details, COLOR_TEXT, COLOR_DIM, l.columns - (len(mark) + 2 if mark != "" else 0))
+		name_columns := l.columns + MARGIN_CELLS - button_columns - 1
+		draw_two_lines(l, top, strings.to_upper(song.name, context.temp_allocator), details, COLOR_TEXT, COLOR_DIM, name_columns - (len(mark) + 2 if mark != "" else 0), name_columns)
 		row_bottom := min(top + l.list_row, l.bottom)
+		append(&state.hits, Hit{top = max(top, list_top), bottom = row_bottom, left = button_left, right = canvas.width, target = Preview_Tap{index = i}})
 		if mark != "" {
-			// The mark at the second line's right end; tapping it opens or closes the foldout.
-			mark_left := canvas.width - mark_width - MARGIN_CELLS * CELL_WIDTH * scale
+			// The mark at the second line's right end, by the play button; tapping it opens or closes the foldout.
+			mark_left := button_left - mark_width - CELL_WIDTH * scale
 			mark_y := top + 3 * scale + CELL_HEIGHT * scale
 			loud := song.sync.state == .Measured && abs(song.sync.shift_ms) > SYNC_STRONG_MS
 			fill_rect(canvas, mark_left, mark_y - scale, mark_width, CELL_HEIGHT * scale, COLOR_BAD if loud else COLOR_KEY)
 			draw_text(canvas, mark, mark_left + CELL_WIDTH * scale, mark_y, scale, COLOR_TEXT if loud || song.sync.state == .Measured else COLOR_DIM)
-			append(&state.hits, Hit{top = max(top, list_top), bottom = row_bottom, left = mark_left - CELL_WIDTH * scale, right = canvas.width, target = Sync_Fold{index = i}})
+			append(&state.hits, Hit{top = max(top, list_top), bottom = row_bottom, left = mark_left - CELL_WIDTH * scale, right = button_left, target = Sync_Fold{index = i}})
 		}
 		if i == state.fold_open do draw_sync_fold(l, top + l.list_row, song.sync)
 		append(&state.hits, Hit{top = max(top, list_top), bottom = row_bottom, target = Song_Tap{index = i}})
@@ -366,13 +386,13 @@ draw_small_button :: proc(l: Layout, left, top, width: int, label: string, lit: 
 	append(&state.hits, Hit{top = top, bottom = top + l.row, left = left, right = left + width, target = target})
 }
 
-// Two lines of text in a list row, each cut to the width only if it truly doesn't fit (the second
-// to `second_columns`, when something sits at its right).
+// Two lines of text in a list row, each cut to the width only if it truly doesn't fit (to
+// `first_columns` / `second_columns` when something sits at their right).
 @(private = "file")
-draw_two_lines :: proc(l: Layout, top: int, first, second: string, first_color, second_color: u32, second_columns := -1) {
+draw_two_lines :: proc(l: Layout, top: int, first, second: string, first_color, second_color: u32, second_columns := -1, first_columns := -1) {
 	margin := MARGIN_CELLS * CELL_WIDTH * l.scale
 	y := top + 3 * l.scale
-	draw_text(l.canvas, fit(first, l.columns), margin, y, l.scale, first_color)
+	draw_text(l.canvas, fit(first, first_columns if first_columns >= 0 else l.columns), margin, y, l.scale, first_color)
 	draw_text(l.canvas, fit(second, second_columns if second_columns >= 0 else l.columns), margin, y + CELL_HEIGHT * l.scale, l.scale, second_color)
 }
 

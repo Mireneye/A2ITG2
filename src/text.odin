@@ -96,6 +96,10 @@ draw_text :: proc(canvas: Canvas, text: string, x, y, scale: int, color: u32 = C
 	}
 }
 
+// Control characters drawn as symbols.
+GLYPH_PLAY  :: 1
+GLYPH_PAUSE :: 2
+
 // Each glyph is 7 rows of 5 bits, leftmost pixel in the highest bit. Characters without a
 // glyph (lowercase is drawn upper-cased before it gets here) show as a hollow box, index 0.
 @(rodata)
@@ -140,6 +144,8 @@ FONT := [128][GLYPH_HEIGHT]u8{
 	' ' = {},
 	'.' = {0b00000, 0b00000, 0b00000, 0b00000, 0b00000, 0b01100, 0b01100},
 	',' = {0b00000, 0b00000, 0b00000, 0b00000, 0b01100, 0b00100, 0b01000},
+	GLYPH_PLAY  = {0b10000, 0b11000, 0b11100, 0b11110, 0b11100, 0b11000, 0b10000},
+	GLYPH_PAUSE = {0b11011, 0b11011, 0b11011, 0b11011, 0b11011, 0b11011, 0b11011},
 	':' = {0b00000, 0b01100, 0b01100, 0b00000, 0b01100, 0b01100, 0b00000},
 	';' = {0b00000, 0b01100, 0b01100, 0b00000, 0b01100, 0b00100, 0b01000},
 	'-' = {0b00000, 0b00000, 0b00000, 0b11111, 0b00000, 0b00000, 0b00000},

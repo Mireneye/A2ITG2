@@ -8,8 +8,11 @@ package a2itg2
 
 import "core:fmt"
 import "core:math"
+import "core:os"
 import "core:slice"
+import "core:strconv"
 import "core:strings"
+import "core:time"
 import "tls"
 import "audio"
 import "chart"
@@ -196,7 +199,7 @@ copy_song :: proc(anchors: ^tls.Trust_Anchors, pack: ^Pack, index: int, destinat
 		entry := pack.entries[entry_index]
 		file_name := last_part(entry.name)
 		progress({step = .Fetching, done = done, total = total})
-		data, fetch_problem := fetch_entry(anchors, pack, entry_index)
+		data, fetch_problem := fetch_entry_cached(anchors, pack, entry_index) // a previewed song's audio is already here
 		if fetch_problem.what != "" do return notes, fetch_problem
 		defer delete(data)
 
@@ -414,6 +417,83 @@ find_in_song :: proc(pack: ^Pack, song: Song, name: string) -> int {
 		if strings.to_lower(inside, context.temp_allocator) == wanted do return entry_index
 	}
 	return -1
+}
+
+// Previews keep the songs' audio in the app (PREVIEW_CACHE_FOLDER), so copying a previewed song
+// doesn't download it again. The oldest files go once the folder is over PREVIEW_CACHE_BYTES.
+PREVIEW_CACHE_FOLDER :: "preview_cache"
+PREVIEW_CACHE_BYTES  :: 60_000_000
+
+@(private = "file")
+cache_path :: proc(pack: ^Pack, entry_index: int) -> string {
+	return fmt.tprintf("%s/%s/%d_%d.bin", state.private_dir, PREVIEW_CACHE_FOLDER, pack.id, entry_index)
+}
+
+// An entry from the preview cache if it's there whole, else fetched; `keep` puts a fetched one in it.
+fetch_entry_cached :: proc(anchors: ^tls.Trust_Anchors, pack: ^Pack, entry_index: int, keep := false) -> (data: []u8, problem: Pack_Problem) {
+	path := cache_path(pack, entry_index)
+	if cached, err := os.read_entire_file(path, context.allocator); err == nil {
+		if i64(len(cached)) == pack.entries[entry_index].uncompressed_size do return cached, {}
+		delete(cached)
+	}
+	data, problem = fetch_entry(anchors, pack, entry_index)
+	if problem.what != "" do return nil, problem
+	if keep {
+		folder := fmt.tprintf("%s/%s", state.private_dir, PREVIEW_CACHE_FOLDER)
+		if !os.exists(folder) do os.make_directory(folder)
+		if os.write_entire_file(path, data) == nil do trim_preview_cache(folder)
+	}
+	return data, {}
+}
+
+@(private = "file")
+trim_preview_cache :: proc(folder: string) {
+	entries, err := os.read_all_directory_by_path(folder, context.temp_allocator)
+	if err != nil do return
+	slice.sort_by(entries, proc(a, b: os.File_Info) -> bool { return time.diff(a.modification_time, b.modification_time) > 0 }) // newest first
+	total: i64
+	for entry in entries {
+		total += entry.size
+		if total > PREVIEW_CACHE_BYTES do os.remove(entry.fullpath)
+	}
+}
+
+// What a preview plays: the song's audio and where its preview starts.
+Preview :: struct {
+	sound:         []u8, // heap
+	format:        audio.Source_Format,
+	start_seconds: f64,
+}
+
+// The song's #MUSIC and #SAMPLESTART, from its .sm (or .ssc, which has the same tags).
+preview_song :: proc(anchors: ^tls.Trust_Anchors, pack: ^Pack, index: int) -> (preview: Preview, problem: Pack_Problem) {
+	song := pack.songs[index]
+	chart_entry := -1
+	for wanted in ([?]string{".sm", ".ssc"}) {
+		for entry_index in song.files {
+			if chart_entry < 0 && strings.to_lower(extension_of(pack.entries[entry_index].name), context.temp_allocator) == wanted do chart_entry = entry_index
+		}
+	}
+	if chart_entry < 0 do return {}, {"THIS SONG HAS NO .SM OR .SSC CHART", ""}
+	chart_bytes, chart_problem := fetch_entry_cached(anchors, pack, chart_entry, keep = true)
+	if chart_problem.what != "" do return {}, chart_problem
+	defer delete(chart_bytes)
+	chart_text := string(chart_bytes)
+
+	music_name := ""
+	for reference in chart_references(chart_text) do if reference.tag == "MUSIC" do music_name = reference.name
+	music := find_in_song(pack, song, music_name) if music_name != "" else -1
+	if music < 0 do return {}, {"THE CHART'S AUDIO FILE IS MISSING", strings.to_upper(music_name, context.temp_allocator)}
+	switch strings.to_lower(extension_of(music_name), context.temp_allocator) {
+	case ".ogg": preview.format = .Ogg
+	case ".mp3": preview.format = .Mp3
+	case:        return {}, {"ONLY OGG AND MP3 AUDIO CAN BE PLAYED", ""}
+	}
+	if start, found := chart.tag_value(chart_text, "SAMPLESTART"); found {
+		preview.start_seconds, _ = strconv.parse_f64(strings.trim_space(start))
+	}
+	preview.sound, problem = fetch_entry_cached(anchors, pack, music, keep = true)
+	return preview, problem
 }
 
 // One file of the pack, fetched and unpacked.

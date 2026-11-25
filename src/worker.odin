@@ -75,7 +75,14 @@ Measure_Stick_Song :: struct {
 	music_id: string,
 }
 
+// The audio of song `index` of the open pack, for playing (kept in the preview cache).
+Preview_Song :: struct {
+	index:   int,
+	pack_id: int, // the pack the screen had: dropped if another is open by now
+}
+
 Job :: union {
+	Preview_Song,
 	Open_Pack,
 	Copy_Song,
 	Load_Catalog,
@@ -150,7 +157,14 @@ Stick_Measured :: struct {
 	sync:  Song_Sync,
 }
 
+Preview_Ready :: struct {
+	index:   int,
+	pack_id: int,
+	preview: Preview, // empty sound when it failed
+}
+
 Message :: union {
+	Preview_Ready,
 	Say,
 	Pack_Ready,
 	Copy_Progress,
@@ -220,6 +234,14 @@ worker_main :: proc() {
 		sync.mutex_unlock(&jobs_lock)
 
 		switch j in job {
+		case Preview_Song:
+			preview: Preview
+			if j.pack_id == pack.id && j.index >= 0 && j.index < len(pack.songs) {
+				problem: Pack_Problem
+				preview, problem = preview_song(&anchors, &pack, j.index)
+				if problem.what != "" do say_from_worker(.Bad, problem.what, problem.why)
+			}
+			tell(Preview_Ready{index = j.index, pack_id = j.pack_id, preview = preview})
 		case Open_Pack:    do_open_pack(j)
 		case Copy_Song:    do_copy_song(j)
 		case Load_Catalog: do_load_catalog(j)

@@ -17,7 +17,9 @@ The screen, top to bottom (screen.odin draws it):
 	AUDIO row   the most an Ogg may take (MP3s are converted to fit); tap - or + to change it
 	PATCH row   whether Oggs over 1:45 are length patched to read as 1:45; tap to switch
 	PACK row    the open pack; tap to read it again
-	the pack's songs; tap one to copy it into the stick folder (videos are left out). A copied song
+	the pack's songs; tap one to copy it into the stick folder (videos are left out). The button at a
+	song's right plays it from its preview point (#SAMPLESTART), and pauses it; its audio is kept in
+	the app, so copying it afterwards doesn't download it again. A copied song
 	whose notes sit off its music carries a sync mark at the right (SYNC +9 MS, or SYNC ? when it
 	couldn't be measured); tap the mark to fold out what was measured and the #OFFSET that would fit.
 	Nothing is changed: the sync is the user's to set (on SYNC).
@@ -99,6 +101,7 @@ Tap_Target :: union {
 	Reload_Pack,
 	Song_Tap,
 	Sync_Fold,
+	Preview_Tap,
 	Reload_Stick,
 	Stick_Song_Tap,
 	Pick_Sync_Step,
@@ -117,6 +120,14 @@ Toggle_Length_Patch :: struct {}
 Reload_Pack      :: struct {}
 Song_Tap         :: struct { index: int }
 Sync_Fold        :: struct { index: int }
+Preview_Tap      :: struct { index: int }
+
+Preview_State :: enum u8 {
+	Idle,
+	Fetching,
+	Playing,
+	Paused,
+}
 Reload_Stick     :: struct {}
 Stick_Song_Tap   :: struct { index: int }
 Pick_Sync_Step   :: struct { step: int }
@@ -169,6 +180,9 @@ App_State :: struct {
 	songs:         []Song_Row,
 	copying:       int, // the song being copied, or -1
 	fold_open:     int, // the song row whose sync foldout is open, or -1
+	preview:       Preview_State,
+	preview_song:  int, // the song row playing, paused or being fetched, or -1
+	preview_start: f64, // where it started, seconds
 	progress:      Copy_Progress,
 
 	scroll:        int, // pixels the song list is scrolled down (results_scroll for the pack list)
@@ -204,6 +218,7 @@ main :: proc() {
 	state.highlight = -1
 	state.fold_open = -1
 	state.sync_open = -1
+	state.preview_song = -1
 	load_settings()
 
 	listen_for_picker_result(app)
@@ -231,6 +246,10 @@ main :: proc() {
 		}
 		handle_worker_messages()
 		handle_text_events()
+		if player_finished() {
+			stop_preview() // played to the end
+			request_draw()
+		}
 		if state.redraw {
 			state.redraw = false
 			draw(app)
@@ -285,11 +304,28 @@ handle_worker_messages :: proc() {
 	if len(messages) == 0 do return
 	for message in messages {
 		switch m in message {
+		case Preview_Ready:
+			preview := m.preview
+			if m.pack_id != state.pack_id || m.index != state.preview_song || state.preview != .Fetching {
+				delete(preview.sound) // asked for something else since
+				continue
+			}
+			if preview.sound == nil {
+				stop_preview()
+				continue
+			}
+			if problem := player_play(preview.sound, preview.format, preview.start_seconds); problem != "" {
+				say(.Bad, "COULD NOT PLAY THE SONG:", problem)
+				stop_preview()
+				continue
+			}
+			state.preview, state.preview_start = .Playing, preview.start_seconds
 		case Say:
 			say(m.mood, m.lines[0], m.lines[1])
 			delete(m.lines[0])
 			delete(m.lines[1])
 		case Pack_Ready:
+			stop_preview()
 			free_song_rows()
 			state.pack_id, state.pack_name, state.songs = m.id, m.name, m.rows
 			state.fold_open = -1
@@ -434,6 +470,22 @@ on_tap :: proc(app: ^glue.android_app, x, y: int) {
 		case Reload_Pack:
 			if state.copying >= 0 do return
 			worker_ask(Open_Pack{id = state.pack_id})
+		case Preview_Tap:
+			if target.index == state.preview_song {
+				#partial switch state.preview {
+				case .Playing:
+					player_pause()
+					state.preview = .Paused
+				case .Paused:
+					player_resume()
+					state.preview = .Playing
+				}
+			} else {
+				stop_preview()
+				state.preview, state.preview_song = .Fetching, target.index
+				if state.copying >= 0 do say(.Waiting, "THE SONG PLAYS ONCE THE COPY IS DONE.")
+				worker_ask(Preview_Song{index = target.index, pack_id = state.pack_id})
+			}
 		case Sync_Fold:
 			state.fold_open = -1 if state.fold_open == target.index else target.index
 		case Song_Tap:
@@ -564,6 +616,11 @@ saved_folder_path :: proc() -> string {
 	return fmt.tprintf("%s/%s", state.private_dir, SAVED_FOLDER_FILE)
 }
 
+stop_preview :: proc() {
+	player_stop()
+	state.preview, state.preview_song = .Idle, -1
+}
+
 list_stick :: proc() {
 	if !state.folder_ok {
 		say(.Bad, "PICK THE STICK FOLDER FIRST (THE STICK ROW ON SONGS).")
@@ -621,6 +678,12 @@ on_app_cmd :: proc(app: ^glue.android_app, cmd: i32) {
 	case glue.APP_CMD_INIT_WINDOW, glue.APP_CMD_WINDOW_RESIZED, glue.APP_CMD_CONTENT_RECT_CHANGED, glue.APP_CMD_CONFIG_CHANGED:
 		state.bars, state.bars_known = read_bar_insets(app)
 		request_draw()
+	case glue.APP_CMD_PAUSE:
+		// The app left the screen: the song shouldn't play on behind it.
+		if state.preview == .Playing {
+			player_pause()
+			state.preview = .Paused
+		}
 	case glue.APP_CMD_WINDOW_REDRAW_NEEDED:
 		draw(app) // Android waits for this frame
 	case glue.APP_CMD_ACTIVITY_CHANGED:
