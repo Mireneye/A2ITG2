@@ -19,7 +19,7 @@ The screen, top to bottom (screen.odin draws it):
 	PACK row    the open pack; tap to read it again
 	the pack's songs; tap one to copy it into the stick folder (videos are left out). Songs already on
 	the stick have a USB stick symbol before their name (in green); copying one again asks first, then replaces it. A
-	song's second line shows its difficulties, length and tempo (e.g. S4 M8 H11 E13 2:05 148: Beginner, Simple, Medium, Hard, Expert) once its
+	song's second line shows its difficulties, length and tempo (e.g. S4 M8 H11 E13 2:05 148: Novice, Simple, Medium, Hard, Expert) once its
 	chart has been read, which happens in the background, after anything else. The button at a
 	song's right plays it from its preview point (#SAMPLESTART), and pauses it; its audio is kept in
 	the app, so copying it afterwards doesn't download it again. A copied song
