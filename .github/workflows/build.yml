@@ -1,0 +1,94 @@
+# Builds the APK on every push to main and publishes it as the "latest" release:
+#   https://github.com/Mireneye/A2ITG2/releases/download/latest/a2itg2.apk
+# Publishing needs the ANDROID_DEBUG_KEYSTORE secret (the app's fixed signing key, base64), so every
+# build can update the app already on the phone. Without it the build still runs, as a compile check.
+name: build
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write # to publish the release
+
+env:
+  ODIN_VERSION: dev-2026-11a
+  MIN_ANDROID: 29
+  BUILD_TOOLS: "37.0.0"
+  PLATFORM: android-36
+
+jobs:
+  apk:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Odin (cached per version)
+        id: odin-cache
+        uses: actions/cache@v4
+        with:
+          path: ~/odin
+          key: odin-${{ env.ODIN_VERSION }}-ubuntu-24.04
+
+      - name: Build Odin
+        if: steps.odin-cache.outputs.cache-hit != 'true'
+        run: |
+          sudo apt-get install -y -q llvm-18-dev clang-18
+          git clone --depth 1 --branch "$ODIN_VERSION" https://github.com/odin-lang/Odin.git ~/odin
+          cd ~/odin && LLVM_CONFIG=llvm-config-18 ./build_odin.sh release
+
+      - name: Android pieces
+        run: |
+          SDKMANAGER="$ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager"
+          yes | "$SDKMANAGER" --licenses > /dev/null
+          # Odin's Android bindings come from NDK r30: take the newest r30 on offer.
+          NDK=$("$SDKMANAGER" --list 2>/dev/null | grep -o 'ndk;30[^ ]*' | sort -V | tail -1)
+          echo "Installing $NDK"
+          "$SDKMANAGER" --install "$NDK" "build-tools;$BUILD_TOOLS" "platforms;$PLATFORM" > /dev/null
+          echo "ODIN_ANDROID_NDK=$ANDROID_SDK_ROOT/ndk/${NDK#ndk;}" >> "$GITHUB_ENV"
+          echo "ODIN_ANDROID_SDK=$ANDROID_SDK_ROOT" >> "$GITHUB_ENV"
+
+      - name: Signing key
+        env:
+          KEYSTORE: ${{ secrets.ANDROID_DEBUG_KEYSTORE }}
+        run: |
+          mkdir -p ~/.android
+          if [ -n "$KEYSTORE" ]; then
+            echo "$KEYSTORE" | base64 -d > ~/.android/debug.keystore
+            echo "SIGNED=fixed" >> "$GITHUB_ENV"
+          else
+            echo "::warning::ANDROID_DEBUG_KEYSTORE is not set: building with a throwaway key and not publishing."
+            keytool -genkeypair -keystore ~/.android/debug.keystore -storepass android -alias androiddebugkey \
+              -keypass android -keyalg RSA -keysize 2048 -validity 10000 -dname "CN=Android Debug,O=Android,C=US"
+            echo "SIGNED=throwaway" >> "$GITHUB_ENV"
+          fi
+
+      - name: Build APK
+        run: |
+          mkdir -p app/lib/arm64-v8a build
+          ~/odin/odin build src -target:linux_arm64 -subtarget:android -minimum-os-version:$MIN_ANDROID \
+            -build-mode:shared -o:speed -vet -strict-style -out:app/lib/arm64-v8a/liba2itg2.so
+          ~/odin/odin bundle android app -minimum-os-version:$MIN_ANDROID -out:build/a2itg2.apk
+          ls -l build/a2itg2.apk
+
+      - name: Publish as "latest"
+        if: env.SIGNED == 'fixed'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          NOTES="Built from ${GITHUB_SHA::7}: $(git log -1 --format=%s)"
+          if gh release view latest > /dev/null 2>&1; then
+            gh release upload latest build/a2itg2.apk --clobber
+            gh release edit latest --notes "$NOTES"
+          else
+            gh release create latest build/a2itg2.apk --prerelease --title "Latest build" --notes "$NOTES"
+          fi
+          # Keep the tag on the commit that was built.
+          git tag -f latest && git push -f origin latest
+
+      - name: Keep the APK with the run
+        uses: actions/upload-artifact@v4
+        with:
+          name: a2itg2-apk
+          path: build/a2itg2.apk

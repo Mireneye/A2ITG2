@@ -8,34 +8,26 @@ across restarts, and write files into it. That proves every phone-side piece the
 before the pack work starts. See [docs/DESIGN.md](docs/DESIGN.md) for the plan and [docs/MAP.md](docs/MAP.md)
 for where things live.
 
-## Setting up (once)
+## Getting the app
 
-1. **Odin** dev-2026-11a or newer, on `PATH`. Use 11a, not dev-2026-11 (that one has a type-check bug).
-2. **A JDK** (17 or newer, e.g. Temurin), through `JAVA_HOME` or `PATH`.
-3. **Android's command-line tools** (no Android Studio needed): download "Command line tools only"
-   for Windows from developer.android.com/studio (bottom of the page), and unzip it so this file exists:
-   `%LocalAppData%\Android\Sdk\cmdline-tools\latest\bin\sdkmanager.bat`
-4. In a terminal, install the rest (the NDK version: pick the newest `ndk;30...` that
-   `sdkmanager --list | findstr ndk` shows; Odin's bindings come from NDK r30):
+GitHub builds the app on every push to `main` and publishes it here. Open this link on the phone:
 
-       cd %LocalAppData%\Android\Sdk\cmdline-tools\latest\bin
-       sdkmanager "platform-tools" "build-tools;37.0.0" "platforms;android-36" "ndk;30.0.XXXXXXX"
+**https://github.com/Mireneye/A2ITG2/releases/download/latest/a2itg2.apk**
 
-5. Point Odin at the NDK, then open a new terminal:
+Open the downloaded file to install it (allow installing from the browser when Android asks).
+Later builds install over it as updates, because every build is signed with the same key.
 
-       setx ODIN_ANDROID_NDK "%LocalAppData%\Android\Sdk\ndk\30.0.XXXXXXX"
+That key lives in the repository's secret `ANDROID_DEBUG_KEYSTORE`. Without it GitHub still builds
+(as a compile check) but publishes nothing.
 
-`build.bat` makes Android's debug signing key on first use if the PC has none.
+## Building on a PC (optional)
 
-## Building
+Only needed to build without GitHub. Needs Odin dev-2026-11a or newer on `PATH`, a JDK, and Android's
+command-line tools with `"platform-tools" "build-tools;37.0.0" "platforms;android-36"` and the newest
+`ndk;30...` installed through `sdkmanager`, with `ODIN_ANDROID_NDK` pointing at the NDK. Then:
 
     build.bat            builds build\a2itg2.apk
-    build.bat install    also installs and starts it on a phone plugged in by USB
-
-`install` needs USB debugging on the phone (Settings, About phone: tap "OS version" 7 times;
-then Additional settings, Developer options, USB debugging; Xiaomi phones also need "Install via USB"
-on in the same list). Without it, copy `build\a2itg2.apk`
-to the phone and open it there (allow installing from that app when asked).
+    build.bat install    also installs and starts it on a phone plugged in with USB debugging
 
 ## The first test
 
