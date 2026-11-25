@@ -61,13 +61,20 @@ draw :: proc(app: ^glue.android_app) {
 		top := list_top + i * row - state.scroll
 		if top + row <= list_top || top >= canvas.height do continue
 		background := u32(COLOR_ROW_ALT) if i % 2 == 1 else u32(COLOR_BACKGROUND)
-		if i == state.copying do background = COLOR_ACTIVE
 		fill_rect(canvas, 0, top, canvas.width, row, background)
 
 		right := megabytes(song.bytes)
 		if i == state.copying {
-			right = fmt.tprintf("%d/%d FILES", state.progress.done, state.progress.total)
-			if state.progress.step == .Converting do right = "CONVERTING"
+			// The row fills as the copy goes: by files, and while converting by the encoding's percent.
+			status := state.progress.status
+			fraction := f32(status.done) / f32(max(status.total, 1))
+			right = fmt.tprintf("%d/%d FILES", status.done, status.total)
+			if status.step == .Converting {
+				fraction = f32(status.percent) / 100
+				right = fmt.tprintf("CONVERTING %d%%", status.percent)
+				if status.pass > 1 do right = fmt.tprintf("SMALLER %d%% (TRY %d)", status.percent, status.pass)
+			}
+			fill_rect(canvas, 0, top, int(f32(canvas.width) * fraction), row, COLOR_ACTIVE)
 		}
 		draw_row_text(canvas, strings.to_upper(song.name, context.temp_allocator), right, top, row, scale, columns, COLOR_TEXT)
 		visible_top := max(top, list_top)

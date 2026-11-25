@@ -52,10 +52,9 @@ Pack_Ready :: struct {
 }
 
 Copy_Progress :: struct {
-	song:        int,
-	step:        Copy_Step,
-	done, total: int,
-	finished:    bool,
+	song:     int,
+	status:   Copy_Status,
+	finished: bool,
 }
 
 Message :: union {
@@ -160,8 +159,8 @@ do_copy_song :: proc(job: Copy_Song) {
 	defer delete(destination.document_id)
 
 	copying_song = job.index
-	notes, copy_problem := copy_song(&anchors, &pack, job.index, destination, job.audio_limit, proc(step: Copy_Step, done, total: int) {
-		tell(Copy_Progress{song = copying_song, step = step, done = done, total = total})
+	notes, copy_problem := copy_song(&anchors, &pack, job.index, destination, job.audio_limit, proc(status: Copy_Status) {
+		tell(Copy_Progress{song = copying_song, status = status})
 	})
 	tell(Copy_Progress{song = job.index, finished = true})
 	if copy_problem.what != "" {

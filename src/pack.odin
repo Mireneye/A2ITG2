@@ -145,7 +145,7 @@ find_songs :: proc(pack: ^Pack) {
 // MP3 audio is converted to Ogg Vorbis within `audio_limit` bytes (src/audio: sample-exact, so the
 // chart's sync holds) and the chart's #MUSIC is rewritten to the new name. The chart is written last:
 // a song folder is complete once its chart is there.
-copy_song :: proc(anchors: ^tls.Trust_Anchors, pack: ^Pack, index: int, destination: Folder_Ref, audio_limit: int, progress: proc(step: Copy_Step, done, total: int)) -> (notes: Copy_Notes, problem: Pack_Problem) {
+copy_song :: proc(anchors: ^tls.Trust_Anchors, pack: ^Pack, index: int, destination: Folder_Ref, audio_limit: int, progress: Copy_Progress_Proc) -> (notes: Copy_Notes, problem: Pack_Problem) {
 	song := pack.songs[index]
 
 	chart := -1
@@ -189,14 +189,20 @@ copy_song :: proc(anchors: ^tls.Trust_Anchors, pack: ^Pack, index: int, destinat
 	for entry_index, done in wanted {
 		entry := pack.entries[entry_index]
 		file_name := last_part(entry.name)
-		progress(.Fetching, done, total)
+		progress({step = .Fetching, done = done, total = total})
 		data, fetch_problem := fetch_entry(anchors, pack, entry_index)
 		if fetch_problem.what != "" do return notes, fetch_problem
 		defer delete(data)
 
 		if entry_index == music && strings.to_lower(extension_of(file_name), context.temp_allocator) == ".mp3" {
-			progress(.Converting, done, total)
-			conversion, convert_problem := audio.mp3_to_ogg(data, audio_limit)
+			progress({step = .Converting, done = done, total = total, pass = 1})
+			conversion_status := Copy_Status{step = .Converting, done = done, total = total}
+			conversion_progress := Conversion_Progress{progress = progress, status = &conversion_status}
+			conversion, convert_problem := audio.mp3_to_ogg(data, audio_limit, proc(data: rawptr, percent, pass: int) {
+				p := (^Conversion_Progress)(data)
+				p.status.percent, p.status.pass = percent, pass
+				p.progress(p.status^)
+			}, &conversion_progress)
 			if convert_problem != .None do return notes, convert_problem_text(convert_problem, audio_limit)
 			defer delete(conversion.ogg)
 			ogg_name := ogg_name_for(pack, song, file_name)
@@ -218,19 +224,36 @@ copy_song :: proc(anchors: ^tls.Trust_Anchors, pack: ^Pack, index: int, destinat
 		notes.files += 1
 	}
 
-	progress(.Fetching, total - 1, total)
+	progress({step = .Fetching, done = total - 1, total = total})
 	chart_name := last_part(pack.entries[chart].name)
 	if write_problem := write_file(folder, chart_name, transmute([]u8)chart_text); write_problem != "" {
 		return notes, {fmt.tprintf("COULD NOT WRITE %s", strings.to_upper(chart_name, context.temp_allocator)), write_problem}
 	}
 	notes.files += 1
-	progress(.Fetching, total, total)
+	progress({step = .Fetching, done = total, total = total})
 	return notes, {}
 }
 
 Copy_Step :: enum u8 {
 	Fetching,
 	Converting,
+}
+
+// Where a copy is: `done` of `total` files, and while converting, `percent` of encoding `pass`
+// (a pass after the first means the first came out over the audio limit).
+Copy_Status :: struct {
+	step:        Copy_Step,
+	done, total: int,
+	percent:     int,
+	pass:        int,
+}
+
+Copy_Progress_Proc :: #type proc(status: Copy_Status)
+
+@(private = "file")
+Conversion_Progress :: struct {
+	progress: Copy_Progress_Proc,
+	status:   ^Copy_Status,
 }
 
 // What a copy found worth telling.

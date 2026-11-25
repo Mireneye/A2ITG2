@@ -2,6 +2,7 @@
 MP3 to Ogg Vorbis at the best quality that fits a size limit.
 
 	result, problem := mp3_to_ogg(mp3_bytes, target_bytes)
+	result, problem := mp3_to_ogg(mp3_bytes, target_bytes, on_progress, data) // told how far it got
 
 The MP3 is decoded the way StepMania plays it (mp3_decode.odin) and every sample goes into the Ogg,
 so the song lines up with the MP3 sample for sample and the chart's #OFFSET stays right. Vorbis adds
@@ -32,6 +33,10 @@ Conversion :: struct {
 	sample_rate: int,
 }
 
+// Called as encoding goes: `percent` of the current pass (0-100, each value once), `pass` from 1.
+// Runs on the converting thread.
+Progress_Proc :: #type proc(data: rawptr, percent: int, pass: int)
+
 Convert_Problem :: enum u8 {
 	None,
 	Not_Mp3,      // no MP3 audio found
@@ -40,7 +45,7 @@ Convert_Problem :: enum u8 {
 	Encoder_Refused,
 }
 
-mp3_to_ogg :: proc(mp3: []u8, target_bytes: int) -> (result: Conversion, problem: Convert_Problem) {
+mp3_to_ogg :: proc(mp3: []u8, target_bytes: int, on_progress: Progress_Proc = nil, data: rawptr = nil) -> (result: Conversion, problem: Convert_Problem) {
 	// Count the samples first: decoding is far faster than encoding, and the bitrate needs the length.
 	frames, channels, rate := count_samples(mp3) or_return
 	result.channels, result.sample_rate = channels, rate
@@ -49,7 +54,8 @@ mp3_to_ogg :: proc(mp3: []u8, target_bytes: int) -> (result: Conversion, problem
 
 	bitrate := clamp(int(f64(target_bytes) * 8 * FRAMING_MARGIN / result.seconds), LOWEST_BITRATE, HIGHEST_BITRATE)
 	for pass in 1..=MAX_PASSES {
-		ogg, used_bitrate, encode_problem := encode_pass(mp3, channels, rate, bitrate)
+		report := Progress_Report{on_progress = on_progress, data = data, pass = pass, total_frames = frames, last_percent = -1}
+		ogg, used_bitrate, encode_problem := encode_pass(mp3, channels, rate, bitrate, &report)
 		if encode_problem != .None do return result, encode_problem
 		result.passes = pass
 		if len(ogg) <= target_bytes {
@@ -74,7 +80,27 @@ count_samples :: proc(mp3: []u8) -> (frames: int, channels: int, rate: int, prob
 }
 
 @(private)
-encode_pass :: proc(mp3: []u8, channels, rate, wanted_bitrate: int) -> (ogg: []u8, bitrate: int, problem: Convert_Problem) {
+Progress_Report :: struct {
+	on_progress:  Progress_Proc,
+	data:         rawptr,
+	pass:         int,
+	total_frames: int,
+	done_frames:  int,
+	last_percent: int,
+}
+
+@(private)
+report_progress :: proc(report: ^Progress_Report, frames: int) {
+	report.done_frames += frames
+	if report.on_progress == nil || report.total_frames <= 0 do return
+	percent := min(report.done_frames * 100 / report.total_frames, 100)
+	if percent == report.last_percent do return
+	report.last_percent = percent
+	report.on_progress(report.data, percent, report.pass)
+}
+
+@(private)
+encode_pass :: proc(mp3: []u8, channels, rate, wanted_bitrate: int, report: ^Progress_Report) -> (ogg: []u8, bitrate: int, problem: Convert_Problem) {
 	info: Vorbis_Info
 	vorbis_info_init(&info)
 	defer vorbis_info_clear(&info)
@@ -132,6 +158,7 @@ encode_pass :: proc(mp3: []u8, channels, rate, wanted_bitrate: int) -> (ogg: []u
 		}
 		vorbis_analysis_wrote(&dsp, c.int(count))
 		drain(&dsp, &block, &stream, &out)
+		report_progress(report, count)
 	}
 	vorbis_analysis_wrote(&dsp, 0) // the end of the song
 	drain(&dsp, &block, &stream, &out)

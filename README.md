@@ -44,7 +44,8 @@ Then:
    converted to the best quality that fits.
 4. The pack (for now always #10850, a small test pack) is read on start; its songs appear below.
    Tap **PACK** to read it again.
-5. Tap a song. Its row shows the files as they copy (and `CONVERTING` while an MP3 becomes an Ogg); the
+5. Tap a song. Its row fills as it copies: by files, then by percent while an MP3 becomes an Ogg (`CONVERTING 37%`;
+   `SMALLER .. (TRY 2)` if the first try came out over the limit). The
    top strip turns green with `SAFE TO UNPLUG`.
 
 Blue strip: working. Green: done. Red: a step failed, and the text says which and why.

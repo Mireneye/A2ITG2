@@ -134,3 +134,16 @@ not_an_mp3_is_refused :: proc(t: ^testing.T) {
 	_, problem := mp3_to_ogg(junk, 1_000_000)
 	testing.expect_value(t, problem, Convert_Problem.Not_Mp3)
 }
+
+@(test)
+progress_climbs_to_100_in_order :: proc(t: ^testing.T) {
+	seen := make([dynamic]int, context.temp_allocator)
+	result, problem := mp3_to_ogg(load(t, "busy.mp3"), 1_000_000, proc(data: rawptr, percent, pass: int) {
+		append((^[dynamic]int)(data), percent)
+	}, &seen)
+	defer delete(result.ogg)
+	testing.expect_value(t, problem, Convert_Problem.None)
+	testing.expect(t, len(seen) > 50) // a 10 s song reports most percents
+	testing.expect_value(t, seen[len(seen) - 1], 100)
+	for i in 1..<len(seen) do testing.expectf(t, seen[i] > seen[i - 1], "percent went %d then %d", seen[i - 1], seen[i])
+}
