@@ -1,0 +1,2 @@
+*.bat text eol=crlf
+*.odin text eol=lf
