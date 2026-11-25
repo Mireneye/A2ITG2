@@ -85,13 +85,10 @@ stick_open :: proc(tree, folder_id: string) -> (result: Stick_Chart, problem: st
 
 	result.sm_id = strings.clone(children[sm_index].id)
 	result.offset, result.original = offset, offset
-	music, _ := chart.tag_value(string(text), "MUSIC")
-	music = strings.to_lower(strings.trim_space(music), context.temp_allocator)
-	for child in children {
-		if music != "" && strings.to_lower(child.name, context.temp_allocator) == music {
-			result.music_id = strings.clone(child.id)
-			result.music_ogg = strings.has_suffix(music, ".ogg")
-		}
+	named, _ := chart.tag_value(string(text), "MUSIC")
+	if music := stick_music(children, named); music >= 0 {
+		result.music_id = strings.clone(children[music].id)
+		result.music_ogg = strings.has_suffix(strings.to_lower(children[music].name, context.temp_allocator), ".ogg")
 	}
 	if backup, ok := read_backup(tree, result.sm_id); ok {
 		defer delete(backup)
@@ -100,6 +97,28 @@ stick_open :: proc(tree, folder_id: string) -> (result: Stick_Chart, problem: st
 		}
 	}
 	return result, ""
+}
+
+// A stick song's audio among its folder's files: the one #MUSIC names, else the folder's audio
+// file, as the cabinet falls back to (like find_music for packs). -1 when it has none.
+@(private = "file")
+stick_music :: proc(children: []Child, named: string) -> int {
+	wanted := strings.to_lower(strings.trim_space(named), context.temp_allocator)
+	for child, i in children {
+		if wanted != "" && !child.is_folder && strings.to_lower(child.name, context.temp_allocator) == wanted do return i
+	}
+	candidates := make([dynamic]int, context.temp_allocator)
+	names := make([dynamic]string, context.temp_allocator)
+	for extension in AUDIO_EXTENSIONS {
+		for child, i in children {
+			if !child.is_folder && strings.has_suffix(strings.to_lower(child.name, context.temp_allocator), extension) {
+				append(&candidates, i)
+				append(&names, child.name)
+			}
+		}
+	}
+	pick := fallback_pick(names[:])
+	return candidates[pick] if pick >= 0 else -1
 }
 
 // Writes `offset` into the chart on the stick, backing the original up first.
@@ -139,16 +158,13 @@ stick_preview :: proc(tree, folder_id: string) -> (preview: Preview, problem: st
 	text, read_problem := read_document(tree, sm_id)
 	if read_problem != "" do return {}, read_problem
 	defer delete(text)
-	music, _ := chart.tag_value(string(text), "MUSIC")
-	music = strings.trim_space(music)
-	for child in children {
-		if music == "" || strings.to_lower(child.name, context.temp_allocator) != strings.to_lower(music, context.temp_allocator) do continue
-		sound, sound_problem := read_document(tree, child.id)
-		if sound_problem != "" do return {}, sound_problem
-		built, build_problem := preview_from_chart(string(text), music, sound)
-		return built, build_problem.what
-	}
-	return {}, "THE CHART'S AUDIO FILE IS NOT IN THE FOLDER"
+	named, _ := chart.tag_value(string(text), "MUSIC")
+	music := stick_music(children, named)
+	if music < 0 do return {}, "THE SONG HAS NO OGG OR MP3 AUDIO"
+	sound, sound_problem := read_document(tree, children[music].id)
+	if sound_problem != "" do return {}, sound_problem
+	built, build_problem := preview_from_chart(string(text), children[music].name, sound)
+	return built, build_problem.what
 }
 
 stick_measure :: proc(tree, sm_id, music_id: string) -> (sync: Song_Sync, problem: string) {

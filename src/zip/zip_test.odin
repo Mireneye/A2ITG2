@@ -103,3 +103,10 @@ damage_is_reported :: proc(t: ^testing.T) {
 	_, _, failure = directory_location(make([]u8, 100, context.temp_allocator)) // no zip at all
 	testing.expect_value(t, failure, Failure.Not_A_Zip)
 }
+
+@(test)
+cp437_names_become_utf8 :: proc(t: ^testing.T) {
+	name := cp437_to_utf8([]u8{'K', 'i', 't', 's', 'u', 'n', 'e', 0xFD, ' ', 0x82, '.', 'o', 'g', 'g'})
+	defer delete(name)
+	testing.expect_value(t, name, "Kitsune² é.ogg")
+}

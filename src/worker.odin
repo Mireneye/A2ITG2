@@ -390,6 +390,7 @@ do_copy_song :: proc(job: Copy_Song) {
 		return
 	}
 	done_line := fmt.tprintf("COPIED %s (%d FILES). SAFE TO UNPLUG THE STICK.", song.name, notes.files)
+	if notes.music_found != "" do done_line = fmt.tprintf("%s ITS CHART NAMED AUDIO THAT ISN'T THERE: IT NOW USES %s.", done_line, notes.music_found)
 	if notes.videos_left_out > 0 do done_line = fmt.tprintf("%s %d VIDEO(S) LEFT OUT.", done_line, notes.videos_left_out)
 	if notes.length_patched do done_line = fmt.tprintf("%s LENGTH PATCHED: %s NOW READS AS 1:45.", done_line, minutes(notes.real_seconds))
 	if notes.patch_failed do done_line = fmt.tprintf("%s ITS OGG COULDN'T BE LENGTH PATCHED.", done_line)

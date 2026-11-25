@@ -147,3 +147,16 @@ fading to 1/e in 12 ms, loudness set by SYNC's CLICKS row, 10-200%; the first ve
 dipping to 35% under each click and back within its tail, placed by the song's own sample count in AAudio's
 callback (`src/metronome`); music and clicks share one
 stream, so the phone's output delay can't pull them apart. Clicks on the drums mean the chart is on the music.
+
+**When #MUSIC names a file that isn't there.** StepMania and OpenITG (the open rebuild of the ITG2 engine,
+`Song::TidyUpData`) then use the folder's audio: they list `.mp3`, `.ogg` and `.wav` files and take the first,
+or the second when there are several and the first's name starts with "intro" (a KSF intro). So a song whose
+chart names its audio wrongly still plays on the cabinet. The app does the same for copying, previews and the
+SYNC page, with `.ogg` before `.mp3` (the cabinet plays only Ogg), and the copied chart's `#MUSIC` names the
+file chosen, so the cabinet never has to guess.
+
+**Zip file names.** A name is UTF-8 when its entry's UTF-8 flag (bit 11) is set, or when Info-ZIP's Unicode
+path field (0x7075) carries a UTF-8 copy matching the stored name's CRC. Otherwise the zip format says CP437,
+which old Windows zippers wrote (`²` is the byte 0xFD); such names are decoded to UTF-8, unless they already
+read as valid UTF-8 (many tools write UTF-8 without the flag). Raw CP437 bytes would otherwise reach Android as
+broken names, failing folder and file creation and comparisons with the chart's tags.

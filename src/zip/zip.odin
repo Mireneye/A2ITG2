@@ -16,6 +16,7 @@ package zip
 
 import "core:hash"
 import "core:strings"
+import "core:unicode/utf8"
 import "../inflate"
 
 // The end record is 22 bytes plus a comment of up to 65535; the ZIP64 locator sits just before it.
@@ -33,7 +34,9 @@ Method :: enum u16 {
 }
 
 Entry :: struct {
-	name:              string, // full path inside the zip, '/' separated; a folder ends in '/'
+	name:              string, // full path inside the zip, '/' separated; a folder ends in '/'; UTF-8
+	name_owned:        bool,   // decoded into its own memory (free it with the entries); else points into the directory
+	stored_name_bytes: int,    // the name's length as stored (the local header's is about the same)
 	method:            Method, // other methods show up as their raw number
 	compressed_size:   i64,
 	uncompressed_size: i64,
@@ -56,6 +59,8 @@ Failure :: enum u8 {
 @(private) SIG_CENTRAL      :: 0x02014b50
 @(private) SIG_LOCAL        :: 0x04034b50
 @(private) ZIP64_EXTRA_ID   :: 0x0001
+@(private) UNICODE_PATH_ID  :: 0x7075 // Info-ZIP's UTF-8 copy of the name
+@(private) FLAG_UTF8        :: 0x0800 // general purpose bit 11: the name is UTF-8
 @(private) ZIP64_END_SIZE   :: 56
 @(private) LOCAL_HEADER_SIZE :: 30
 @(private) MAX_U16 :: 0xFFFF
@@ -93,7 +98,13 @@ zip64_directory_location :: proc(record: []u8) -> (directory: Span, failure: Fai
 	return {offset = i64(read_u64(record, 48)), size = i64(read_u64(record, 40))}, .None
 }
 
-// The entries of a central directory. Names point into `directory`, so keep it alive.
+// The entries of a central directory. Names point into `directory`, so keep it alive; names that had to
+// be decoded (name_owned) are allocated with `allocator`.
+//
+// Names are UTF-8 when the entry's UTF-8 flag is set or Info-ZIP's Unicode path field carries them.
+// Otherwise the zip format says CP437 (the DOS character set), which old Windows zippers wrote: "²" is the
+// byte 0xFD there. A name that already reads as UTF-8 is kept as it is: many tools write UTF-8 without
+// setting the flag, and CP437 text almost never happens to be valid UTF-8.
 read_directory :: proc(directory: []u8, allocator := context.allocator) -> (entries: [dynamic]Entry, failure: Failure) {
 	entries = make([dynamic]Entry, allocator)
 	at := 0
@@ -104,15 +115,24 @@ read_directory :: proc(directory: []u8, allocator := context.allocator) -> (entr
 		end := at + 46 + name_length + extra_length + note_length
 		if end > len(directory) do return entries, .Damaged
 
+		stored := directory[at + 46:][:name_length]
+		flags := read_u16(directory, at + 8)
 		entry := Entry{
-			name              = string(directory[at + 46:][:name_length]),
+			name              = string(stored),
+			stored_name_bytes = name_length,
 			method            = Method(read_u16(directory, at + 10)),
 			crc32             = read_u32(directory, at + 16),
 			compressed_size   = i64(read_u32(directory, at + 20)),
 			uncompressed_size = i64(read_u32(directory, at + 24)),
 			local_offset      = i64(read_u32(directory, at + 42)),
 		}
-		apply_zip64_extra(&entry, directory[at + 46 + name_length:][:extra_length]) or_return
+		extra := directory[at + 46 + name_length:][:extra_length]
+		apply_zip64_extra(&entry, extra) or_return
+		if unicode, found := unicode_path(extra, stored); found {
+			entry.name = unicode
+		} else if flags & FLAG_UTF8 == 0 && !utf8.valid_string(entry.name) {
+			entry.name, entry.name_owned = cp437_to_utf8(stored, allocator), true
+		}
 		append(&entries, entry)
 		at = end
 	}
@@ -145,6 +165,46 @@ apply_zip64_extra :: proc(entry: ^Entry, extra: []u8) -> Failure {
 	return .None
 }
 
+// Info-ZIP's Unicode path field: a version byte, the CRC-32 of the stored name (so a renamed entry's
+// stale copy is ignored), then the name in UTF-8.
+@(private)
+unicode_path :: proc(extra, stored: []u8) -> (name: string, found: bool) {
+	at := 0
+	for at + 4 <= len(extra) {
+		id, size := read_u16(extra, at), int(read_u16(extra, at + 2))
+		if at + 4 + size > len(extra) do return
+		field := extra[at + 4:][:size]
+		at += 4 + size
+		if id != UNICODE_PATH_ID || size < 5 || field[0] != 1 do continue
+		if read_u32(field, 1) != hash.crc32(stored) do continue
+		text := string(field[5:])
+		if utf8.valid_string(text) do return text, true
+	}
+	return
+}
+
+// CP437's upper half, 0x80 to 0xFF.
+@(private, rodata)
+CP437_HIGH := [128]rune{
+	'Ç', 'ü', 'é', 'â', 'ä', 'à', 'å', 'ç', 'ê', 'ë', 'è', 'ï', 'î', 'ì', 'Ä', 'Å',
+	'É', 'æ', 'Æ', 'ô', 'ö', 'ò', 'û', 'ù', 'ÿ', 'Ö', 'Ü', '¢', '£', '¥', '₧', 'ƒ',
+	'á', 'í', 'ó', 'ú', 'ñ', 'Ñ', 'ª', 'º', '¿', '⌐', '¬', '½', '¼', '¡', '«', '»',
+	'░', '▒', '▓', '│', '┤', '╡', '╢', '╖', '╕', '╣', '║', '╗', '╝', '╜', '╛', '┐',
+	'└', '┴', '┬', '├', '─', '┼', '╞', '╟', '╚', '╔', '╩', '╦', '╠', '═', '╬', '╧',
+	'╨', '╤', '╥', '╙', '╘', '╒', '╓', '╫', '╪', '┘', '┌', '█', '▄', '▌', '▐', '▀',
+	'α', 'ß', 'Γ', 'π', 'Σ', 'σ', 'µ', 'τ', 'Φ', 'Θ', 'Ω', 'δ', '∞', 'φ', 'ε', '∩',
+	'≡', '±', '≥', '≤', '⌠', '⌡', '÷', '≈', '°', '∙', '·', '√', 'ⁿ', '²', '■', '\u00A0',
+}
+
+cp437_to_utf8 :: proc(stored: []u8, allocator := context.allocator) -> string {
+	b := strings.builder_make(0, len(stored) * 2, allocator)
+	for c in stored {
+		if c < 0x80 do strings.write_byte(&b, c)
+		else do strings.write_rune(&b, CP437_HIGH[c - 0x80])
+	}
+	return strings.to_string(b)
+}
+
 is_folder :: proc(entry: Entry) -> bool {
 	return strings.has_suffix(entry.name, "/")
 }
@@ -153,7 +213,7 @@ is_folder :: proc(entry: Entry) -> bool {
 // extra field may differ in length from the central directory's, so a little slack is added.
 LOCAL_SLACK :: 1024
 entry_span :: proc(entry: Entry) -> Span {
-	return {offset = entry.local_offset, size = LOCAL_HEADER_SIZE + i64(len(entry.name)) + LOCAL_SLACK + entry.compressed_size}
+	return {offset = entry.local_offset, size = LOCAL_HEADER_SIZE + i64(entry.stored_name_bytes) + LOCAL_SLACK + entry.compressed_size}
 }
 
 // The entry's contents, from bytes fetched at entry_span(entry).

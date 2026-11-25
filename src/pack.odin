@@ -88,6 +88,7 @@ open_pack :: proc(anchors: ^tls.Trust_Anchors, id: int) -> (pack: Pack, problem:
 pack_destroy :: proc(pack: ^Pack) {
 	for &song in pack.songs do delete(song.files)
 	delete(pack.songs)
+	for entry in pack.entries do if entry.name_owned do delete(entry.name)
 	delete(pack.entries)
 	delete(pack.directory)
 	delete(pack.url)
@@ -180,15 +181,25 @@ copy_song :: proc(anchors: ^tls.Trust_Anchors, pack: ^Pack, index: int, destinat
 			notes.videos_left_out += 1 // a banner or background movie: the cabinet does fine without
 			continue
 		}
+		if reference.tag == "MUSIC" do continue // below, with StepMania's fallback
 		found := find_in_song(pack, song, reference.name)
 		if found < 0 {
-			if reference.tag == "MUSIC" do return notes, {"THE CHART'S AUDIO FILE IS MISSING", strings.to_upper(reference.name, context.temp_allocator)}
 			notes.missing += 1 // a missing picture only costs the picture
 			continue
 		}
-		if reference.tag == "MUSIC" do music = found
 		if found != chart && !slice.contains(wanted[:], found) do append(&wanted, found)
 	}
+	named_music := ""
+	for reference in chart_references(chart_text) do if reference.tag == "MUSIC" do named_music = reference.name
+	renamed: bool
+	music, renamed = find_music(pack, song, named_music)
+	if music < 0 do return notes, {"THE SONG HAS NO OGG OR MP3 AUDIO", strings.to_upper(named_music, context.temp_allocator)}
+	if renamed {
+		// The cabinet would look for the same file; the copy names the one that is there.
+		notes.music_found = last_part(pack.entries[music].name)
+		chart_text = set_music(chart_text, notes.music_found)
+	}
+	if !slice.contains(wanted[:], music) do append(&wanted, music)
 	total := len(wanted) + 1 // and the chart
 
 	folder, folder_problem := create_folder(destination, song.name)
@@ -319,6 +330,7 @@ Copy_Notes :: struct {
 	patch_failed:     bool, // the Ogg couldn't be read for patching (copied unpatched)
 	real_seconds:     f64,
 	sync:             Song_Sync,
+	music_found:      string, // when the chart's #MUSIC named a file the folder doesn't have: the one used
 }
 
 // How the chart's notes sit on its music (audio/sync_match.odin), and the #OFFSET that would put them
@@ -402,6 +414,52 @@ chart_references :: proc(chart: string) -> [5]Chart_Reference {
 		found[i].name = strings.trim_space(value[:end])
 	}
 	return found
+}
+
+// Audio a song can have, in the order the fallback prefers (the cabinet plays Ogg; MP3 gets converted).
+@(rodata)
+AUDIO_EXTENSIONS := [?]string{".ogg", ".mp3"}
+
+// The song's audio: the file #MUSIC names, or, when it names nothing or a file that isn't there, the
+// folder's audio file, as StepMania and OpenITG (the ITG2 engine's open rebuild, Song::TidyUpData) fall
+// back to: the first audio file, or the second when there are several and the first's name starts
+// with "intro" (a KSF intro). They list .mp3 before .ogg; here .ogg comes first, since the cabinet
+// plays only Ogg, and the copied chart names the file chosen, so the cabinet never has to fall back
+// itself. `renamed` tells it was the fallback.
+find_music :: proc(pack: ^Pack, song: Song, named: string) -> (entry: int, renamed: bool) {
+	if named != "" {
+		if found := find_in_song(pack, song, named); found >= 0 do return found, false
+	}
+	candidates := make([dynamic]int, context.temp_allocator)
+	for extension in AUDIO_EXTENSIONS {
+		for entry_index in song.files {
+			if strings.to_lower(extension_of(pack.entries[entry_index].name), context.temp_allocator) == extension do append(&candidates, entry_index)
+		}
+	}
+	names := make([]string, len(candidates), context.temp_allocator)
+	for candidate, i in candidates do names[i] = last_part(pack.entries[candidate].name)
+	pick := fallback_pick(names)
+	return (candidates[pick] if pick >= 0 else -1), pick >= 0
+}
+
+// Which of the folder's audio files the fallback takes (-1: none): the first, unless there are several
+// and the first's name starts with "intro".
+fallback_pick :: proc(names: []string) -> int {
+	if len(names) == 0 do return -1
+	if len(names) > 1 && strings.has_prefix(strings.to_lower(names[0], context.temp_allocator), "intro") do return 1
+	return 0
+}
+
+// The chart with #MUSIC set to `name`, the tag added at the top if the chart has none.
+set_music :: proc(chart, name: string) -> string {
+	if _, found := chart_tag_index(chart, "MUSIC"); found do return replace_tag_value(chart, "MUSIC", name)
+	return strings.concatenate({"#MUSIC:", name, ";\n", chart}, context.temp_allocator)
+}
+
+@(private = "file")
+chart_tag_index :: proc(chart, tag: string) -> (at: int, found: bool) {
+	at = strings.index(strings.to_upper(chart, context.temp_allocator), fmt.tprintf("#%s:", tag))
+	return at, at >= 0
 }
 
 // The entry in the song's folder named `name` (FAT and Windows ignore letter case), or -1.
@@ -512,8 +570,9 @@ preview_song :: proc(anchors: ^tls.Trust_Anchors, pack: ^Pack, index: int) -> (p
 
 	music_name := ""
 	for reference in chart_references(chart_text) do if reference.tag == "MUSIC" do music_name = reference.name
-	music := find_in_song(pack, song, music_name) if music_name != "" else -1
-	if music < 0 do return {}, {"THE CHART'S AUDIO FILE IS MISSING", strings.to_upper(music_name, context.temp_allocator)}
+	music, _ := find_music(pack, song, music_name)
+	if music < 0 do return {}, {"THE SONG HAS NO OGG OR MP3 AUDIO", strings.to_upper(music_name, context.temp_allocator)}
+	music_name = last_part(pack.entries[music].name)
 	sound, sound_problem := fetch_entry_cached(anchors, pack, music, keep = true)
 	if sound_problem.what != "" do return {}, sound_problem
 	return preview_from_chart(chart_text, music_name, sound)
