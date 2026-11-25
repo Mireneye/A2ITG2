@@ -68,9 +68,9 @@ Layout :: struct {
 
 SYNC_FOLD_LINES :: 3
 
-// Setting rows' buttons, as parts of the screen's width: - and + slim, ON/OFF wide enough for "OFF".
+// Setting rows' buttons, as parts of the screen's width: - and + slim, switches wide enough for "NOTES".
 STEP_BUTTON_PARTS   :: 15
-SWITCH_BUTTON_PARTS :: 6
+SWITCH_BUTTON_PARTS :: 5
 
 @(private = "file") geometry_window: ^android.ANativeWindow // the window the buffer format was set for
 
@@ -308,7 +308,7 @@ draw_sync_page :: proc(l: Layout) {
 	draw_line(l, header_top, row - scale, fmt.tprintf("%d SONGS  TAP TO RELOAD", len(state.stick_rows)), COLOR_TEXT)
 	append(&state.hits, Hit{top = header_top, bottom = header_top + row, target = Reload_Stick{}})
 
-	// The metronome: its volume with - and +, and ON/OFF.
+	// The metronome: its volume with - and +, and OFF / BEATS / NOTES.
 	step_width := canvas.width / STEP_BUTTON_PARTS
 	switch_width := canvas.width / SWITCH_BUTTON_PARTS
 	switch_left := canvas.width - switch_width
@@ -316,7 +316,9 @@ draw_sync_page :: proc(l: Layout) {
 	draw_line(l, clicks_top, row - scale, fmt.tprintf("CLICKS %d%%", state.click_volume), COLOR_TEXT)
 	draw_small_button(l, switch_left - 2 * step_width, clicks_top, step_width, "-", true, Click_Volume{up = false})
 	draw_small_button(l, switch_left - step_width, clicks_top, step_width, "+", true, Click_Volume{up = true})
-	draw_small_button(l, switch_left, clicks_top, switch_width, "ON" if state.metronome == 1 else "OFF", state.metronome == 1, Toggle_Clicks{})
+	CLICK_LABELS := [Click_Mode]string{.Off = "OFF", .Beats = "BEATS", .Notes = "NOTES"}
+	mode := Click_Mode(state.metronome)
+	draw_small_button(l, switch_left, clicks_top, switch_width, CLICK_LABELS[mode], mode != .Off, Toggle_Clicks{})
 }
 
 // A song row's play button, a square at its right end; returns its left edge.

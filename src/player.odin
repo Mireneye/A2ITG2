@@ -3,7 +3,7 @@ Playing a song's audio on the phone, for previews on the SONGS page.
 
 	player_play(preview)                        starts (takes the preview; stops whatever was playing)
 	player_pause() / player_resume()
-	player_set_clicks(on)                       the metronome on or off, any time
+	player_set_clicks(mode)                     the metronome off, on the beats, or on the notes, any time
 	player_set_offset(seconds)                  the #OFFSET the metronome follows, any time
 	player_set_click_volume(volume)             how loud the clicks are (1 = the metronome's default)
 	player_stop()
@@ -16,7 +16,8 @@ is on the exact sample. Pausing stops AAudio; the thread waits while the ring is
 
 The metronome (src/metronome) is mixed in by the callback, from the song's own sample count: a click
 at every beat of the chart (its time at #OFFSET 0, less the offset), a higher one starting each
-measure, the music dipping under each click so it can be heard over a loud mix. Music and
+measure, or (Notes) a click at every note, StepMania's "assist tick", which tells a chart's timing even
+when its BPM is wrong; the music dips under each click so it can be heard over a loud mix. Music and
 clicks leave through the same stream, so the phone's output delay moves both alike: what is heard is
 the chart's timing against the music, as the cabinet would play it.
 */
@@ -41,13 +42,14 @@ Player :: struct {
 	worker:   ^thread.Thread,
 	bytes:    []u8,
 	ticks:    []chart.Tick,
+	note_ticks: []chart.Tick,
 	format:   audio.Source_Format,
 	from:     f64,
 	start_frame: i64, // the song's sample frame the ring starts at
 	offset_bits: u64, // the #OFFSET the clicks follow, as the f64's bits (set from the app's loop)
-	clicks:   bool,
+	clicks:   Click_Mode, // set from the app's loop
 	volume_bits: u32, // the clicks' volume, as the f32's bits
-	metronome: metronome.Metronome,
+	metronome: [Click_Mode]metronome.Metronome, // .Off unused
 	channels: int,
 	rate:     int,
 	ring:     []f32, // PLAYER_RING_FRAMES * channels
@@ -61,12 +63,21 @@ Player :: struct {
 @(private = "file") player: Player
 
 // Starts the preview (its memory becomes the player's) from its preview point. "" or a problem to show.
-player_play :: proc(preview: Preview, clicks: bool, click_volume: f32) -> string {
+Click_Mode :: enum u8 {
+	Off,
+	Beats,
+	Notes,
+}
+
+player_play :: proc(preview: Preview, clicks: Click_Mode, click_volume: f32) -> string {
 	player_stop()
 	bytes, format, from_seconds := preview.sound, preview.format, preview.start_seconds
-	ticks := preview.ticks
+	ticks, note_ticks := preview.ticks, preview.note_ticks
 	handed_over := false // once the player holds the ticks, player_stop frees them
-	defer if !handed_over do delete(ticks)
+	defer if !handed_over {
+		delete(ticks)
+		delete(note_ticks)
+	}
 	probe: audio.Decoder
 	if !audio.decoder_open(&probe, format, bytes) {
 		audio.decoder_close(&probe)
@@ -98,10 +109,11 @@ player_play :: proc(preview: Preview, clicks: bool, click_volume: f32) -> string
 		return string(aaudio.AAudio_convertResultToText(result))
 	}
 
-	player = Player{stream = stream, bytes = bytes, ticks = ticks, format = format, from = from_seconds, channels = channels, rate = rate, clicks = clicks}
+	player = Player{stream = stream, bytes = bytes, ticks = ticks, note_ticks = note_ticks, format = format, from = from_seconds, channels = channels, rate = rate, clicks = clicks}
 	player.start_frame = i64(max(from_seconds, 0) * f64(rate))
 	player.offset_bits = transmute(u64)preview.offset
-	player.metronome = metronome.metronome_make(ticks, rate)
+	player.metronome[.Beats] = metronome.metronome_make(ticks, rate)
+	player.metronome[.Notes] = metronome.metronome_make(note_ticks, rate)
 	player.volume_bits = transmute(u32)click_volume
 	handed_over = true
 	player.ring = make([]f32, PLAYER_RING_FRAMES * channels)
@@ -118,8 +130,8 @@ player_pause :: proc() {
 	if player.stream != nil do aaudio.AAudioStream_requestPause(player.stream)
 }
 
-player_set_clicks :: proc(on: bool) {
-	intrinsics.atomic_store_explicit(&player.clicks, on, .Relaxed)
+player_set_clicks :: proc(mode: Click_Mode) {
+	intrinsics.atomic_store_explicit(&player.clicks, mode, .Relaxed)
 }
 
 player_set_click_volume :: proc(volume: f32) {
@@ -144,6 +156,7 @@ player_stop :: proc() {
 	delete(player.ring)
 	delete(player.bytes)
 	delete(player.ticks)
+	delete(player.note_ticks)
 	player = {}
 }
 
@@ -203,10 +216,10 @@ fill_callback :: proc "c" (stream: ^aaudio.AAudioStream, user_data: rawptr, audi
 		for c in 0..<channels do out[i * channels + c] = player.ring[at + c]
 	}
 	for i in count * channels..<len(out) do out[i] = 0
-	if count > 0 && intrinsics.atomic_load_explicit(&player.clicks, .Relaxed) {
+	if mode := intrinsics.atomic_load_explicit(&player.clicks, .Relaxed); count > 0 && mode != .Off {
 		offset := transmute(f64)intrinsics.atomic_load_explicit(&player.offset_bits, .Relaxed)
 		volume := transmute(f32)intrinsics.atomic_load_explicit(&player.volume_bits, .Relaxed)
-		metronome.mix(&player.metronome, out[:count * channels], channels, player.start_frame + i64(read), offset, volume)
+		metronome.mix(&player.metronome[mode], out[:count * channels], channels, player.start_frame + i64(read), offset, volume)
 	}
 	intrinsics.atomic_store_explicit(&player.read, read + u64(count), .Seq_Cst)
 	if count == 0 && intrinsics.atomic_load_explicit(&player.decoded, .Seq_Cst) && !intrinsics.atomic_load_explicit(&player.finished, .Relaxed) {

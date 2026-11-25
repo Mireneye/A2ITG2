@@ -501,13 +501,15 @@ Preview :: struct {
 	sound:         []u8, // heap
 	format:        audio.Source_Format,
 	start_seconds: f64,
-	ticks:         []chart.Tick, // heap; at #OFFSET 0
+	ticks:         []chart.Tick, // heap; every beat, at #OFFSET 0
+	note_ticks:    []chart.Tick, // heap; every note, at #OFFSET 0
 	offset:        f64,          // the chart's #OFFSET
 }
 
 preview_destroy :: proc(p: ^Preview) {
 	delete(p.sound)
 	delete(p.ticks)
+	delete(p.note_ticks)
 	p^ = {}
 }
 
@@ -525,6 +527,7 @@ preview_from_chart :: proc(chart_text, music_name: string, sound: []u8) -> (prev
 	}
 	if timing, ok := chart.read_timing(chart_text); ok {
 		preview.ticks = chart.metronome_ticks(chart_text, timing)
+		preview.note_ticks = chart.note_ticks(chart_text, timing)
 		preview.offset = timing.offset
 		chart.timing_destroy(&timing)
 	}

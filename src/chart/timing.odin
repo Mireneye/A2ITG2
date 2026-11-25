@@ -128,6 +128,15 @@ metronome_ticks :: proc(sm: string, t: Timing, allocator := context.allocator) -
 	return ticks
 }
 
+// Every moment with a note to step on, as metronome ticks (at #OFFSET 0, like metronome_ticks): an
+// "assist tick", to hear the chart's own timing against the music, whatever its BPM.
+note_ticks :: proc(sm: string, t: Timing, allocator := context.allocator) -> []Tick {
+	notes := note_seconds(sm, t, context.temp_allocator)
+	ticks := make([]Tick, len(notes), allocator)
+	for &tick, i in ticks do tick = {seconds = notes[i] + t.offset}
+	return ticks
+}
+
 @(private = "file")
 add_note_beats :: proc(beats: ^[dynamic]f64, notes: string) {
 	measure := 0

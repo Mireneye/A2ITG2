@@ -168,3 +168,10 @@ position in the original; upper-casing turns an invalid byte into the 3-byte U+F
 byte landed 2 bytes off: `#MUSIC` names were misread (songs reported as missing their audio) and rewritten
 values were put in the wrong place (`#OFFSET:-0-0.201;`). Every chart change on the stick is now also read back
 and compared with what was written.
+
+**Assist tick (CLICKS: NOTES).** Besides BEATS, the metronome can click on every note (every chart's,
+a jump once), StepMania's "assist tick". It tells a chart's own timing against the music even when the
+chart's BPM is wrong, as in hand-placed charts (a made-up high BPM with notes on a 64th grid, like the
+Chobits chart: 50% 64ths, 24% 32nds, just as notes dropped at random would fall), where beat clicks can
+never sit on the music. Row text fits the 30-letter-wide screen: CLICKS label at most 11 letters, slim
+- and +, a switch a fifth of the width for "NOTES".

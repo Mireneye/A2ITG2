@@ -100,6 +100,17 @@ metronome_ticks_follow_the_timing :: proc(t: ^testing.T) {
 }
 
 @(test)
+note_ticks_are_the_notes_at_offset_zero :: proc(t: ^testing.T) {
+	sm := "#OFFSET:0.5;\n#BPMS:0=120;\n#NOTES:\n dance-single:\n x:\n Hard:\n 9:\n 0:\n1000\n0000\n0110\n0000\n;\n"
+	timing, _ := read_timing(sm)
+	defer timing_destroy(&timing)
+	ticks := note_ticks(sm, timing)
+	defer delete(ticks)
+	testing.expect_value(t, len(ticks), 2) // a jump is one tick
+	testing.expect(t, abs(ticks[0].seconds) < 1e-9 && abs(ticks[1].seconds - 1.0) < 1e-9)
+}
+
+@(test)
 offsets_written_like_stepmania :: proc(t: ^testing.T) {
 	testing.expect_value(t, format_offset(0.161), "0.161")
 	testing.expect_value(t, format_offset(-4.888), "-4.888")

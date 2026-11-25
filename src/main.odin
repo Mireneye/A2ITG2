@@ -26,8 +26,9 @@ The screen, top to bottom (screen.odin draws it):
 
 	SYNC page: change the sync of songs already on the stick (stick.odin)
 	STICK row   how many song folders the stick folder has; tap to read it again
-	CLICKS row  the metronome: clicks on the chart's beats while a song plays here, how loud they are
-	            (- and +, heard at once), and ON/OFF
+	CLICKS row  the metronome while a song plays here: how loud (- and +, heard at once), and
+	            OFF / BEATS (the chart's beats) / NOTES (every note: hears the chart's own timing,
+	            even when its BPM is wrong)
 	the stick's songs; the button at the right plays one from the stick (with the metronome, if on,
 	following the nudges as they're made); tap a song to open it:
 	            its #OFFSET now and the original, and how far the notes moved
@@ -195,7 +196,7 @@ App_State :: struct {
 	preview:       Preview_State,
 	preview_song:  int, // the song row playing, paused or being fetched, or -1
 	preview_page:  Page, // which list that row is in (.Songs or .Sync)
-	metronome:     int,  // 1 on, 0 off (a saved setting)
+	metronome:     int,  // a Click_Mode: 0 off, 1 beats, 2 notes (a saved setting)
 	click_volume:  int,  // percent of the metronome's default loudness (a saved setting)
 	preview_start: f64, // where it started, seconds
 	progress:      Copy_Progress,
@@ -334,7 +335,7 @@ handle_worker_messages :: proc() {
 			// On SYNC the metronome follows the offset as shown, which may be ahead of the stick.
 			if row := stick_row(m.index, m.pack_id); m.page == .Sync && row != nil && row.opened do preview.offset = row.wanted
 			// Clicks are for syncing: only on SYNC.
-			if problem := player_play(preview, m.page == .Sync && state.metronome == 1, f32(state.click_volume) / 100); problem != "" {
+			if problem := player_play(preview, click_mode(m.page), f32(state.click_volume) / 100); problem != "" {
 				say(.Bad, "COULD NOT PLAY THE SONG:", problem)
 				stop_preview()
 				continue
@@ -500,8 +501,8 @@ on_tap :: proc(app: ^glue.android_app, x, y: int) {
 			player_set_click_volume(f32(state.click_volume) / 100)
 			save_settings()
 		case Toggle_Clicks:
-			state.metronome = 1 - state.metronome
-			player_set_clicks(state.metronome == 1 && state.preview_page == .Sync)
+			state.metronome = (state.metronome + 1) % len(Click_Mode) // OFF -> BEATS -> NOTES
+			player_set_clicks(click_mode(state.preview_page))
 			save_settings()
 		case Preview_Tap:
 			if target.index == state.preview_song && target.page == state.preview_page {
@@ -621,7 +622,7 @@ Setting :: struct {
 settings_table :: proc() -> [6]Setting {
 	return {
 		{key = "click_volume",      value = &state.click_volume, default = 100,                 min = CLICK_VOLUME_MIN, max = CLICK_VOLUME_MAX},
-		{key = "metronome",         value = &state.metronome,    default = 0,                   min = 0,               max = 1},
+		{key = "metronome",         value = &state.metronome,    default = 0,                   min = 0,               max = len(Click_Mode) - 1},
 		{key = "sync_step",         value = &state.sync_step,    default = 1,                   min = 0,               max = len(SYNC_STEPS) - 1},
 		{key = "audio_limit_bytes", value = &state.audio_limit,  default = DEFAULT_AUDIO_LIMIT, min = AUDIO_LIMIT_MIN, max = AUDIO_LIMIT_MAX},
 		{key = "length_patch",      value = &state.length_patch, default = 1,                   min = 0,               max = 1},
@@ -654,6 +655,11 @@ save_settings :: proc() {
 
 saved_folder_path :: proc() -> string {
 	return fmt.tprintf("%s/%s", state.private_dir, SAVED_FOLDER_FILE)
+}
+
+// Clicks are for syncing: only on SYNC.
+click_mode :: proc(page: Page) -> Click_Mode {
+	return Click_Mode(state.metronome) if page == .Sync else .Off
 }
 
 stop_preview :: proc() {
