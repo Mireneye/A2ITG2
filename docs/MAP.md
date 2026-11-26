@@ -34,4 +34,4 @@
 | `docs/DESIGN.md` | What the app is meant to become, and the findings behind it |
 | `docs/VENDORED.md` | Where the copied code came from, and the changes made to it |
 
-The build writes `app/lib/arm64-v8a/liba2itg2.so`, `build/a2itg2.apk`, `libs/` and `third_party/`; all git-ignored.
+The build writes `app/lib/arm64-v8a/liba2itg2.so`, `build/a2itg2.apk`, `libs/` and `third_party/`; all git-ignored. To run the tests on the phone's instruction set (arm64) on a PC, build `libs/linux_arm64/libaudio.a` with `sh tools/build_audio_libs.sh libs/linux_arm64 aarch64-linux-gnu-gcc aarch64-linux-gnu-ar`, build the tests with `-target:linux_arm64`, and run them under `qemu-aarch64 -L /usr/aarch64-linux-gnu`.

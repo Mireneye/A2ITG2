@@ -15,6 +15,8 @@ import "core:c"
 // dr_mp3, libogg and libvorbis in one archive (see the build script).
 when ODIN_PLATFORM_SUBTARGET == .Android {
 	foreign import libaudio "../../libs/android_arm64/libaudio.a"
+} else when ODIN_ARCH == .arm64 {
+	foreign import libaudio "../../libs/linux_arm64/libaudio.a" // the tests on the phone's instruction set, under QEMU
 } else {
 	foreign import libaudio "../../libs/linux_amd64/libaudio.a"
 }
