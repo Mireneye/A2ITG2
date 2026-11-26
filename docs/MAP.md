@@ -15,7 +15,7 @@
 | `src/text.odin` | Pixel drawing and a 5x7 bitmap font (ZZ-Replace: stand-in UI) |
 | `src/web/` | HTTPS GET of a byte range, over `src/tls` |
 | `src/zip/` | Reading a zip a few byte ranges at a time, ZIP64 included; `zip_test.odin` tests it |
-| `src/audio/` | MP3 to Ogg and shrinking Oggs: `mp3_decode.odin` and `ogg_decode.odin` (StepMania's MP3 and Ogg reading, ported), `convert.odin` (Vorbis encoding to a size limit), `length_patch.odin` (the ITG Ogg length patch), `decoder.odin` (either decoder behind one face), `attacks.odin` and `sync_match.odin` (measuring where the music's beats are against a chart's notes), `libraries.odin` (C bindings); tests check sync to the sample |
+| `src/audio/` | MP3 to Ogg and shrinking Oggs: `mp3_decode.odin` (MP3 frames through dr_mp3, with StepMania's and libmad's rules) and `ogg_decode.odin` (StepMania's Ogg reading, ported), `convert.odin` (Vorbis encoding to a size limit), `length_patch.odin` (the ITG Ogg length patch), `decoder.odin` (either decoder behind one face), `attacks.odin` and `sync_match.odin` (measuring where the music's beats are against a chart's notes), `libraries.odin` (C bindings); tests check sync to the sample |
 | `src/chart/` | A `.sm` chart's timing: `#OFFSET`, `#BPMS`, `#STOPS`, when each note is; `sync_test.odin` tests the sync measurement |
 | `src/metronome/` | Clicks on a chart's beats mixed into a playing song (the music dips under each click); tested on PC |
 | `src/confirm.odin` | Asking before something that can't be undone (deleting, replacing): Android's own dialog |
@@ -26,7 +26,8 @@
 | `app/res/` | Resources: the app's name |
 | `.github/workflows/build.yml` | GitHub runs the tests, builds the APK on every push and publishes it as the "latest" release |
 | `build.bat` | Building on a PC instead (optional); `install` also puts it on the phone |
-| `tools/build_audio_libs.sh` | Fetches libmad (StepMania's copy), libogg and libvorbis at pinned commits and builds `libs/<target>/libaudio.a` |
+| `tools/build_audio_libs.sh` | Fetches dr_mp3, libogg and libvorbis at pinned commits and builds `libs/<target>/libaudio.a` |
+| `THIRD_PARTY_NOTICES.md` | The licenses of the code the app is built with, and the notices they ask for |
 | `tools/make_audio_fixtures.py` | Makes the click-track and dense test MP3s for `src/audio` (needs `lame`) |
 | `tests/fixtures/sync/` | Git-ignored: the user's cab-perfect songs (`.sm` + `.ogg`) for the sync tests |
 | `tools/make_zip_fixtures.py` | Makes the test zips for `src/zip` (into the git-ignored `tests/fixtures/`) |

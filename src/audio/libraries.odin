@@ -1,7 +1,7 @@
 /*
 Bindings for the C audio libraries (built by tools/build_audio_libs.sh into libs/<target>/libaudio.a):
-libmad 0.15.1b for MP3 decoding, libogg and libvorbis for Ogg Vorbis encoding, and libvorbis' vorbisfile
-for Ogg Vorbis decoding (as StepMania reads Oggs).
+dr_mp3's frame decoder for MP3 decoding, libogg and libvorbis for Ogg Vorbis encoding, and libvorbis'
+vorbisfile for Ogg Vorbis decoding (as StepMania reads Oggs).
 
 Only what the converter calls. Structs the converter reads into are written out field by field;
 structs it only hands back to the libraries are opaque blocks of the right size. layout_test.odin
@@ -12,138 +12,34 @@ package audio
 
 import "core:c"
 
-// libmad, libogg and libvorbis in one archive (see the build script).
+// dr_mp3, libogg and libvorbis in one archive (see the build script).
 when ODIN_PLATFORM_SUBTARGET == .Android {
 	foreign import libaudio "../../libs/android_arm64/libaudio.a"
 } else {
 	foreign import libaudio "../../libs/linux_amd64/libaudio.a"
 }
 
-// ---- libmad ----
+// ---- dr_mp3 ----
 
-MAD_BUFFER_GUARD :: 8   // zero bytes after the last frame so the decoder can finish it
-MAD_F_FRACBITS   :: 28  // mad_fixed_t is 4.28 fixed point
-MAD_FLAG_LSF_EXT :: 0x1000
-
-Mad_Error :: enum c.int {
-	NONE           = 0x0000,
-	BUFLEN         = 0x0001,
-	BUFPTR         = 0x0002,
-	NOMEM          = 0x0031,
-	LOSTSYNC       = 0x0101,
-	BADLAYER       = 0x0102,
-	BADBITRATE     = 0x0103,
-	BADSAMPLERATE  = 0x0104,
-	BADEMPHASIS    = 0x0105,
-	BADCRC         = 0x0201,
-	BADBITALLOC    = 0x0211,
-	BADSCALEFACTOR = 0x0221,
-	BADMODE        = 0x0222,
-	BADFRAMELEN    = 0x0231,
-	BADBIGVALUES   = 0x0232,
-	BADBLOCKTYPE   = 0x0233,
-	BADSCFSI       = 0x0234,
-	BADDATAPTR     = 0x0235,
-	BADPART3LEN    = 0x0236,
-	BADHUFFTABLE   = 0x0237,
-	BADHUFFDATA    = 0x0238,
-	BADSTEREO      = 0x0239,
+// dr_mp3's frame decoder (minimp3's). drmp3dec's contents are dr_mp3's own: only its size matters here
+// (sizeof(drmp3dec), checked in layout_test.odin).
+Drmp3_Dec :: struct #align(8) {
+	_: [22928]u8,
 }
 
-// MAD_RECOVERABLE: errors in one frame that decoding can step past.
-mad_recoverable :: proc(error: Mad_Error) -> bool {
-	return u32(error) & 0xff00 != 0
-}
-
-Mad_Mode :: enum c.int {
-	SINGLE_CHANNEL = 0,
-	DUAL_CHANNEL   = 1,
-	JOINT_STEREO   = 2,
-	STEREO         = 3,
-}
-
-Mad_Bitptr :: struct {
-	byte:  [^]u8,
-	cache: c.ushort,
-	left:  c.ushort,
-}
-
-Mad_Timer :: struct {
-	seconds:  c.long,
-	fraction: c.ulong,
-}
-
-Mad_Stream :: struct {
-	buffer:     [^]u8,
-	bufend:     [^]u8,
-	skiplen:    c.ulong,
-	sync:       c.int,
-	freerate:   c.ulong,
-	this_frame: [^]u8,
-	next_frame: [^]u8,
-	ptr:        Mad_Bitptr,
-	anc_ptr:    Mad_Bitptr,
-	anc_bitlen: c.uint,
-	main_data:  rawptr,
-	md_len:     c.uint,
-	options:    c.int,
-	error:      Mad_Error,
-}
-
-Mad_Header :: struct {
-	layer:          c.int,
-	mode:           Mad_Mode,
-	mode_extension: c.int,
-	emphasis:       c.int,
-	bitrate:        c.ulong,
-	samplerate:     c.uint,
-	crc_check:      c.ushort,
-	crc_target:     c.ushort,
-	flags:          c.int,
-	private_bits:   c.int,
-	duration:       Mad_Timer,
-}
-
-Mad_Frame :: struct {
-	header:   Mad_Header,
-	options:  c.int,
-	sbsample: [2][36][32]i32,
-	overlap:  rawptr,
-}
-
-Mad_Pcm :: struct {
-	samplerate: c.uint,
-	channels:   c.ushort,
-	length:     c.ushort,
-	samples:    [2][1152]i32,
-}
-
-Mad_Synth :: struct {
-	filter: [2][2][2][16][8]i32,
-	phase:  c.uint,
-	pcm:    Mad_Pcm,
-}
-
-// MAD_NCHANNELS
-mad_channels :: proc(header: ^Mad_Header) -> int {
-	return 1 if header.mode == .SINGLE_CHANNEL else 2
+Drmp3_Frame_Info :: struct {
+	frame_bytes:  c.int,
+	channels:     c.int,
+	sample_rate:  c.int,
+	layer:        c.int, // 0 when no complete frame was found
+	bitrate_kbps: c.int,
 }
 
 @(default_calling_convention = "c")
 foreign libaudio {
-	mad_stream_init     :: proc(stream: ^Mad_Stream) ---
-	mad_stream_finish   :: proc(stream: ^Mad_Stream) ---
-	mad_stream_buffer   :: proc(stream: ^Mad_Stream, buffer: [^]u8, length: c.ulong) ---
-	mad_stream_skip     :: proc(stream: ^Mad_Stream, length: c.ulong) ---
-	mad_stream_errorstr :: proc(stream: ^Mad_Stream) -> cstring ---
-	mad_frame_init      :: proc(frame: ^Mad_Frame) ---
-	mad_frame_finish    :: proc(frame: ^Mad_Frame) ---
-	mad_frame_decode    :: proc(frame: ^Mad_Frame, stream: ^Mad_Stream) -> c.int ---
-	mad_frame_mute      :: proc(frame: ^Mad_Frame) ---
-	mad_synth_init      :: proc(synth: ^Mad_Synth) ---
-	mad_synth_frame     :: proc(synth: ^Mad_Synth, frame: ^Mad_Frame) ---
-	mad_synth_mute      :: proc(synth: ^Mad_Synth) ---
-	mad_bit_read        :: proc(ptr: ^Mad_Bitptr, length: c.uint) -> c.ulong ---
+	drmp3dec_init         :: proc(dec: ^Drmp3_Dec) ---
+	// One frame into `pcm` (floats, interleaved): its samples per channel, 0 when it gave none.
+	drmp3dec_decode_frame :: proc(dec: ^Drmp3_Dec, mp3: [^]u8, mp3_bytes: c.int, pcm: [^]f32, info: ^Drmp3_Frame_Info) -> c.int ---
 }
 
 // ---- libogg ----

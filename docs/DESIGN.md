@@ -13,8 +13,8 @@ cabinet's USB stick from the phone. Planned features beyond a plain copy:
 ## Stack
 
 - **Odin** for all app code, built with Odin's Android target (`-subtarget:android`, `odin bundle android`).
-- **libmad** (MP3 decoding) and **libvorbis** (Ogg Vorbis encoding), C libraries called with `foreign import`.
-  libmad is GPL: fine for personal use; sharing the app means releasing its source under the GPL.
+- **dr_mp3** (MP3 decoding, its frame decoder) and **libvorbis** (Ogg Vorbis encoding), C libraries called with
+  `foreign import`. No GPL code: the licenses allow selling the app (notices in `THIRD_PARTY_NOTICES.md`).
 - **TLS** copied from Weaving Mirage (`src/tls`, see `docs/VENDORED.md`); on Android the trusted roots come from
   `/apex/com.android.conscrypt/cacerts` or `/system/etc/security/cacerts`.
 - **Deflate** copied from Folding Mirage (`src/inflate`), for unpacking songs from the zips.
@@ -41,7 +41,8 @@ fetching single files means skipping them.
   silence, to match DWI's decoder (BASS);
 - plays frames it cannot decode at the start (e.g. after an MP3 was cut) as silence.
 
-So the converter decodes with libmad, follows those three rules, and encodes every sample it outputs.
+So the converter decodes the frames (dr_mp3, see below), follows those three rules, and encodes every sample
+it outputs.
 The OGG then lines up with the MP3 sample for sample and the chart's offset stays right without knowing
 the encoder's delay. Vorbis adds no delay of its own. What remains is the known ~9 ms difference between
 charts synced for PC and for ITG machines, which the offset feature covers.
@@ -62,9 +63,18 @@ picking that Songs folder puts songs where the cabinet looks.
 every custom song at 120 seconds whether or not the .ogg is patched, so the .ogg length patch only helps
 on r21 cabinets.
 
-**Conversion as built.** libmad 0.15.1b from StepMania's own tree, built with FPM_64BIT as StepMania does on
-Linux/macOS (plain C arithmetic, so the phone and the test machine decode alike). The decoding loop is a port
-of StepMania's, rules above included. Every decoded sample goes to libvorbis (StepMania's pinned commit) at an
+**Conversion as built.** MP3 frames are decoded by dr_mp3's frame decoder (minimp3's; public domain or MIT-0),
+handed one frame at a time; finding the frames and StepMania's rules above stay in Odin (`mp3_decode.odin`),
+following libmad's framing exactly (a frame expected at the start and after each frame, ID3 tags skipped on lost
+sync, a frame found by searching kept only if another sync word follows), so dr_mp3's own frame search never
+decides anything. A frame whose bit reservoir is missing gives no samples in dr_mp3 and silence in libmad: the
+silence is added here. Until 2026-11-26 the app used libmad 0.15.1b itself (GPL); before it went, both decoded 15
+files (the click tracks; LAME CBR 320 with an Info frame, VBR with a Xing frame, no tag, mono, MPEG-2 22 kHz,
+MPEG-2.5 11 kHz, CRC, ID3v1, ID3v2, a file cut mid-stream, a 10 s dense file, a real 1:30 song) to the same
+sample rate, channels and number of samples, every sample within 0.000002 at the same position (libmad is
+fixed-point, dr_mp3 floating-point), in 0.35 s for dr_mp3 against 0.75 s for libmad on a PC. Not reproduced, as
+dr_mp3 doesn't check them: a frame with a bad CRC (libmad silences it) or damaged Huffman data (libmad drops
+it), both rare. Every decoded sample goes to libvorbis (StepMania's pinned commit) at an
 average bitrate worked out from the limit and the song's length; if the file comes out over, the bitrate drops by
 the overshoot and it is encoded again. Tests on click tracks (CBR with an Info frame, VBR with a Xing frame, no
 frame) check the clicks land 1105 or 2257 samples late as StepMania plays them, and on the same sample in the Ogg,

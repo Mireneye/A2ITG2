@@ -64,7 +64,7 @@ jobs:
             echo "SIGNED=throwaway" >> "$GITHUB_ENV"
           fi
 
-      - name: Audio libraries (libmad, libogg, libvorbis)
+      - name: Audio libraries (dr_mp3, libogg, libvorbis)
         run: |
           TOOLS="$ODIN_ANDROID_NDK/toolchains/llvm/prebuilt/linux-x86_64/bin"
           tools/build_audio_libs.sh libs/android_arm64 "$TOOLS/clang --target=aarch64-linux-android$MIN_ANDROID" "$TOOLS/llvm-ar"
